@@ -1,0 +1,108 @@
+# Xiaomi Mi 10 (umi). The phone keeps no slot of its own: its boot, recovery
+# and dtbo partitions are single, and it boots a system the recovery of which
+# was last built with a boot image header of version 2. Everything below is
+# taken from the phone itself, on HyperOS 1.0.7.0 (OS1.0.7.0.TJBCNXM), the
+# last stock build of its maker.
+[device]
+codename = "umi"
+brand = "Xiaomi"
+model = "Xiaomi Mi 10"
+# No slots: the phone's boot, recovery and dtbo partitions are single.
+ab = false
+soc = { hans = "骁龙®865移动平台", hant = "Snapdragon® 865 行動平台", en = "Snapdragon® 865 Mobile Platform" }
+os_version_prop = "ro.build.version.incremental"
+
+[display]
+width = 1080
+height = 2340
+density = 440
+diagonal = 6.67
+
+[modules]
+# The kernel's own module folder in the vendor partition. The umi kernel was
+# built with no CONFIG_RD_LZ4: a ramdisk packed for it goes out in gzip.
+sources = ["vendor"]
+# The touchscreen is built into the kernel; nothing of the vendor's own is
+# loaded for it.
+
+# The persist partition, which the phone mounts at /mnt/vendor/persist and
+# its own recovery leaves unmounted. The WLAN's MAC address is there, and the
+# fingerprint data too.
+[partitions]
+mounted = ["persist"]
+
+# What the phone's own init runs once the system has finished starting, as
+# kernel-post-boot in /vendor/etc/init/hw/init.qcom.rc: the kernel starts
+# both CPU clusters on the performance governor, and the script hands them to
+# schedutil, which lets idle CPUs power down. Without it the CPUs stay at
+# their highest clock even while idle, and the phone slowly heats up.
+[[service]]
+path = "/vendor/bin/sh"
+args = ["/vendor/bin/init.qcom.post_boot.sh"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "root"
+groups = ["root", "system", "wakelock", "graphics"]
+
+# WLAN: the WCN3988 on the phone's PCIe, driven by qca_cld3_qca6390 over the
+# cnss2 platform driver. Once fs_ready is written, cnss2 powers the chip up
+# and loads its firmware, and wlan0 appears. The driver reads its settings
+# and the MAC address through the firmware loader; the vendor partition
+# keeps both as links in its own firmware folder, which the phone's own
+# recovery covers with the modem's, so they are given to the loader again:
+# the settings from the vendor partition, the address from where the phone
+# itself keeps it, at the top of persist rather than the link's folder, for
+# the link the vendor carries points at a folder the recovery mounts none
+# of.
+[wlan]
+modules = ["qca_cld3_qca6390"]
+writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+firmware = [
+    { name = "wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/qca6390/WCNSS_qcom_cfg.ini" },
+    { name = "wlan/qca_cld/qca6390/wlan_mac.bin", partition = "persist", path = "wlan_mac.bin" },
+]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+libraries = ["/vendor/lib64", "/system/lib64"]
+# The supplicant of this phone is of the older kind that registers with the
+# hardware directory, but the recovery drives it over its control socket,
+# which is ready once the process is, and asks no directory for it: the name
+# is the one Skyward's own description of it publishes.
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+probe = "http://connect.rom.miui.com/generate_204"
+
+# The update server the stock updater of the Chinese system asks.
+[update]
+server = "https://update.miui.com/updates/miotaV3.php"
+
+# The stock build the recovery is made on: the Chinese system's HyperOS
+# 1.0.7.0, whose fastboot package on the phone maker's own download server
+# holds the recovery partition the recovery is built on top of.
+[stock]
+version = "OS1.0.7.0.TJBCNXM"
+package = "https://bigota.d.miui.com/OS1.0.7.0.TJBCNXM/umi_images_OS1.0.7.0.TJBCNXM_20251101.0000.00_13.0_cn_479616fdc7.tgz"
+recovery = "0000000000000000000000000000000000000000000000000000000000000000"
+
+# The partitions a backup of the baseband and EFS takes: the baseband's
+# settings, with the IMEI, and the sensors' calibration. And what of the
+# data partition a backup leaves out because the secure world keeps it in
+# step with itself: its own storage, its apps' data and the fingerprint
+# templates.
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+data_skipped = ["vendor/tzstorage", "vendor/qtee", "vendor/fingerprint", "vendor/fpc", "vendor/goodix", "vendor/misys"]
+
+# Where the phone's own programs keep logs in the data partition: the
+# system's, the last kernel and logcat lines the diag service saves at each
+# start, and what the modem, Wi-Fi and Bluetooth leave when they crash.
+[wipe]
+logs = [
+    "/data/miuilog",
+    "/data/vendor/diag",
+    "/data/vendor/log",
+    "/data/vendor/ramdump",
+    "/data/vendor/ramdump_ssr",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+    "/data/vendor/wlan_logs",
+]

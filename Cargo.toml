@@ -8,8 +8,6 @@ members = [
     "crates/skyward-block",
     "crates/skyward-vab",
     "crates/skyward-modules",
-    "crates/skyward-omapi",
-    "crates/skyward-programs",
     "crates/skyward-ui",
     "crates/skyward-crypto",
     "crates/skyward-files",
@@ -27,7 +25,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 

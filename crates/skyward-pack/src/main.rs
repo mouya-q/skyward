@@ -7,9 +7,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 mod avb;
-mod described;
 
 use skyward_bootimg::{BootImage, Ramdisk};
+use abootimg_oxide::Header;
 
 /// Builds Skyward recovery images from a device's own stock images.
 #[derive(Parser)]
@@ -85,25 +85,6 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Take what a device's own partitions say of the programs they carry
-    /// out of its stock build's full update package on its server: the
-    /// init scripts, the service descriptions, the accounts and the build
-    /// properties of each partition that carries such programs, written
-    /// under `out` as the partition and then the path in it. Only the
-    /// parts of the package that hold these files are downloaded, each
-    /// checked against the package's own sum of it.
-    Described {
-        /// The device configuration, devices/<codename>.toml.
-        #[arg(long)]
-        config: PathBuf,
-        /// A partition to take them out of; vendor, odm and system_ext
-        /// when none is named.
-        #[arg(long = "partition")]
-        partitions: Vec<String>,
-        /// The folder to write the files under, which is not there yet.
-        #[arg(long)]
-        out: PathBuf,
-    },
 }
 
 fn main() -> Result<()> {
@@ -168,7 +149,13 @@ fn main() -> Result<()> {
             let mut props = without(stock_props, &BUILD_VERSION);
             props.extend_from_slice(b"\nro.secure=0\nro.adb.secure=0\nro.debuggable=1\nro.ota.allow_downgrade=true\n");
             rd.replace(paths::PROP_DEFAULT, props)?;
-            img.ramdisk = rd.encode()?;
+            img.ramdisk = match &img.header {
+                // The kernels of the phones with a recovery partition of their
+                // own read no LZ4: their ramdisks are packed in gzip, and a
+                // rebuilt one is packed the same way.
+                Header::V0(_) => rd.encode_gzip()?,
+                Header::V3(_) => rd.encode()?,
+            };
             let bytes = img.to_bytes()?;
             write(&out, &img, &avb::footed(&bytes, "recovery", size, &Sha256::digest(&bytes))?)
         }
@@ -179,11 +166,6 @@ fn main() -> Result<()> {
                 Some(out) => take_stock_recovery(&stock, &out),
                 None => Ok(()),
             }
-        }
-        Cmd::Described { config, partitions, out } => {
-            let stock = skyward_config::DeviceConfig::load(&config)?.stock.with_context(|| format!("{} names no stock build", config.display()))?;
-            let partitions = if partitions.is_empty() { skyward_programs::phone::PARTITIONS.map(str::to_string).to_vec() } else { partitions };
-            described::take(&stock.package, &partitions, &out)
         }
     }
 }
@@ -199,6 +181,72 @@ fn take_stock_recovery(stock: &skyward_config::Stock, out: &Path) -> Result<()> 
     std::fs::create_dir_all(parent).with_context(|| format!("make {}", parent.display()))?;
     // Taken out beside where it goes, so it is moved there whole.
     let work = tempfile::Builder::new().prefix(".stock").tempdir_in(parent).with_context(|| format!("make a folder in {}", parent.display()))?;
+    if stock.package.ends_with(".tgz") {
+        take_from_tgz(stock, &work)
+    } else {
+        take_from_payload(stock, &work)
+    }?;
+    let image_path = work.path().join(RECOVERY);
+    let sum = sha256_of(&image_path)?;
+    ensure!(sum == stock.recovery, "the {RECOVERY} partition in {} has the SHA-256 {sum}, where the configuration names {}", stock.package, stock.recovery);
+    std::fs::rename(&image_path, out).with_context(|| format!("move {} to {}", image_path.display(), out.display()))?;
+    let size = std::fs::metadata(&out).with_context(|| format!("stat {}", out.display()))?.len();
+    println!("wrote {} ({} bytes), its SHA-256 the one the configuration names", out.display(), size);
+    Ok(())
+}
+
+/// The SHA-256 of `path`, in lowercase hex.
+fn sha256_of(path: &Path) -> Result<String> {
+    use std::io::Read;
+    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buf).with_context(|| format!("read {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Take the recovery partition out of a fastboot package, a tarball of the
+/// partitions as images, streamed from its server and read only as far as
+/// the recovery image: the tarball holds the images one after another, and
+/// nothing of the ones after the recovery is read of it.
+fn take_from_tgz(stock: &skyward_config::Stock, work: &tempfile::TempDir) -> Result<()> {
+    use std::io::Read;
+    let response = ureq::get(&stock.package).call().with_context(|| format!("open {}", stock.package))?;
+    let reader = response.into_reader();
+    let gz = flate2::read::GzDecoder::new(reader);
+    let mut tar = tar::Archive::new(gz);
+    let mut found = false;
+    for entry in tar.entries().with_context(|| format!("read the entries of {}", stock.package))? {
+        let mut entry = entry.with_context(|| format!("read an entry of {}", stock.package))?;
+        let path = entry.path().with_context(|| format!("read an entry's name in {}", stock.package))?.to_path_buf();
+        let name = match path.file_name() {
+            Some(n) => n.to_string_lossy().into_owned(),
+            None => continue,
+        };
+        // The fastboot package names the partition images as
+        // recovery.img in its images folder.
+        if name != format!("{RECOVERY}.img") {
+            continue;
+        }
+        let to = work.path().join(RECOVERY);
+        entry.unpack(&to).with_context(|| format!("take {name} out of {}", stock.package))?;
+        println!("took {name} out of the fastboot package");
+        found = true;
+        break;
+    }
+    ensure!(found, "{} holds no {} image", stock.package, RECOVERY);
+    Ok(())
+}
+
+/// Take the recovery partition out of a full OTA package, reading only what
+/// that partition takes of it.
+fn take_from_payload(stock: &skyward_config::Stock, work: &tempfile::TempDir) -> Result<()> {
     let payload = unpayload::Payload::open_url(&stock.package).with_context(|| format!("open {}", stock.package))?;
     let options = unpayload::ExtractOptions { output_dir: work.path().to_path_buf(), partitions: vec![RECOVERY.into()], ..Default::default() };
     let report = |event: unpayload::Event<'_>| match event {
@@ -212,10 +260,7 @@ fn take_stock_recovery(stock: &skyward_config::Stock, out: &Path) -> Result<()> 
     };
     let taken = payload.extract(&options, &report).with_context(|| format!("take {RECOVERY} out of {}", stock.package))?;
     let image = taken.iter().find(|i| i.partition == RECOVERY).with_context(|| format!("{} holds no {RECOVERY} partition", stock.package))?;
-    let sum: String = image.sha256.as_deref().context("the package's own sum of the image was not checked")?.iter().map(|b| format!("{b:02x}")).collect();
-    ensure!(sum == stock.recovery, "the {RECOVERY} partition in {} has the SHA-256 {sum}, where the configuration names {}", stock.package, stock.recovery);
-    std::fs::rename(&image.path, out).with_context(|| format!("move {} to {}", image.path.display(), out.display()))?;
-    println!("wrote {} ({} bytes), its SHA-256 the one the configuration names", out.display(), image.size);
+    std::fs::rename(&image.path, work.path().join(RECOVERY)).with_context(|| format!("move {} to {}", image.path.display(), work.path().display()))?;
     Ok(())
 }
 
@@ -288,7 +333,7 @@ fn list(image: &Path) -> Result<()> {
         h.header_version(),
         img.kernel.len(),
         img.ramdisk.len(),
-        h.osversionpatch
+        h.osversionpatch()
     );
     if img.ramdisk.is_empty() {
         return Ok(());
