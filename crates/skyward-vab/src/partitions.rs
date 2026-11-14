@@ -68,9 +68,9 @@ fn bytes(p: &Partition) -> u64 {
 
 /// Map partition `p` from super read-only with device-mapper and mount it
 /// over its point. A device that does not mount is removed again.
-fn map_and_mount(p: &Partition, devices: &[(u32, u32)], slot: Slot) -> Result<Mounted> {
+fn map_and_mount(p: &Partition, devices: &[(u32, u32)], suffix: &str) -> Result<Mounted> {
     let device = dm::create(&p.name, &targets(p, devices), true)?;
-    let mount_point = mount_point(base(p, slot));
+    let mount_point = mount_point(base(p, suffix));
     let mounted = (|| -> Result<String> {
         fs::create_dir_all(&mount_point).with_context(|| format!("create {}", mount_point.display()))?;
         Ok(mount::mount_ro_over(&device, &mount_point).with_context(|| format!("mount {}", p.name))?.to_string())
@@ -84,17 +84,44 @@ fn map_and_mount(p: &Partition, devices: &[(u32, u32)], slot: Slot) -> Result<Mo
     }
 }
 
+/// The suffix the partitions of the system carry in `md`: `_a` or `_b` on a
+/// phone with slots, nothing on a phone that keeps one copy of its system.
+/// Read off the names super holds rather than assumed from the slot, since
+/// that is the one place the two kinds of phone differ.
+pub(crate) fn suffix_of(md: &Metadata, slot: Slot) -> &'static str {
+    for p in &md.partitions {
+        for base in ["system", "vendor", "product", "odm", "system_ext"] {
+            if p.name == base {
+                return "";
+            }
+            if let Some(rest) = p.name.strip_prefix(base) {
+                if rest == "_a" {
+                    return "_a";
+                }
+                if rest == "_b" {
+                    return "_b";
+                }
+            }
+        }
+    }
+    slot.suffix()
+}
+
 /// The slot's partitions that hold data. Copy-on-write partitions such as
 /// odm_b-cow end in -cow and stay out.
 fn slot_partitions(md: &Metadata, slot: Slot) -> Vec<&Partition> {
+    let suffix = suffix_of(md, slot);
     md.partitions
         .iter()
-        .filter(|p| p.name.ends_with(slot.suffix()) && !p.extents.is_empty() && p.attributes & ATTR_DISABLED == 0)
+        .filter(|p| p.name.ends_with(suffix) && !p.extents.is_empty() && p.attributes & ATTR_DISABLED == 0)
+        // With no suffix to tell them apart, the copy-on-write partitions are
+        // the ones whose names end in -cow.
+        .filter(|p| !suffix.is_empty() || !p.name.ends_with("-cow"))
         .collect()
 }
 
-fn base(p: &Partition, slot: Slot) -> &str {
-    &p.name[..p.name.len() - slot.suffix().len()]
+fn base<'a>(p: &'a Partition, suffix: &str) -> &'a str {
+    &p.name[..p.name.len() - suffix.len()]
 }
 
 /// Partitions are mapped only while no update snapshot is outstanding,
@@ -126,6 +153,7 @@ pub fn mount_partitions(slot: Slot) -> Result<Mounts> {
     };
 
     let shown = mounted_partitions(slot)?;
+    let suffix = suffix_of(&md, slot);
     let mut mounts = Mounts { partitions: Vec::new(), damaged: md.damaged.clone() };
     for p in slot_partitions(&md, slot) {
         if let Some(m) = shown.iter().find(|m| m.partition == p.name) {
@@ -133,8 +161,8 @@ pub fn mount_partitions(slot: Slot) -> Result<Mounts> {
             continue;
         }
         let mounted = match through.map(|s| Ok::<_, anyhow::Error>((s, s.live(p)?))).transpose()? {
-            Some((s, Some(status))) => mount_snapshot(s, &md, &devices, p, &status, slot)?,
-            _ => map_and_mount(p, &devices, slot)?,
+            Some((s, Some(status))) => mount_snapshot(s, &md, &devices, p, &status, suffix)?,
+            _ => map_and_mount(p, &devices, suffix)?,
         };
         mounts.partitions.push(mounted);
     }
@@ -184,15 +212,15 @@ pub fn check_merge(slot: Slot, tell: &dyn Fn(MergeStatus) -> Result<()>) -> Resu
 
 /// Map partition `p` through its snapshot `status` and mount it read-only;
 /// a snapshot that does not mount is taken apart again.
-fn mount_snapshot(snaps: &Snapshots, md: &Metadata, devices: &[(u32, u32)], p: &Partition, status: &SnapshotStatus, slot: Slot) -> Result<Mounted> {
+fn mount_snapshot(snaps: &Snapshots, md: &Metadata, devices: &[(u32, u32)], p: &Partition, status: &SnapshotStatus, suffix: &str) -> Result<Mounted> {
     let device = snapshots::map_snapshot(snaps, md, devices, p, status)?;
-    mount_mapped(p, device, slot)
+    mount_mapped(p, device, suffix)
 }
 
 /// Mount partition `p`, mapped as its snapshot at `device`, read-only over
 /// its point; the snapshot is taken apart again if it does not mount.
-fn mount_mapped(p: &Partition, device: PathBuf, slot: Slot) -> Result<Mounted> {
-    let mount_point = mount_point(base(p, slot));
+fn mount_mapped(p: &Partition, device: PathBuf, suffix: &str) -> Result<Mounted> {
+    let mount_point = mount_point(base(p, suffix));
     let mounted = (|| -> Result<String> {
         fs::create_dir_all(&mount_point).with_context(|| format!("create {}", mount_point.display()))?;
         Ok(mount::mount_ro_over(&device, &mount_point).with_context(|| format!("mount {}", p.name))?.to_string())
@@ -210,14 +238,16 @@ fn mount_mapped(p: &Partition, device: PathBuf, slot: Slot) -> Result<Mounted> {
 /// `vendor`), in the order super lists them, whether or not they are mounted.
 pub fn slot_bases(slot: Slot) -> Result<Vec<String>> {
     let md = skyward_lp::read(&super_device(), slot.number())?;
-    Ok(slot_partitions(&md, slot).into_iter().map(|p| base(p, slot).to_string()).collect())
+    let suffix = suffix_of(&md, slot);
+    Ok(slot_partitions(&md, slot).into_iter().map(|p| base(p, suffix).to_string()).collect())
 }
 
 /// The slot's logical partitions by base name with the bytes each holds, in
 /// the order super lists them.
 pub fn slot_sizes(slot: Slot) -> Result<Vec<(String, u64)>> {
     let md = skyward_lp::read(&super_device(), slot.number())?;
-    Ok(slot_partitions(&md, slot).into_iter().map(|p| (base(p, slot).to_string(), bytes(p))).collect())
+    let suffix = suffix_of(&md, slot);
+    Ok(slot_partitions(&md, slot).into_iter().map(|p| (base(p, suffix).to_string(), bytes(p))).collect())
 }
 
 /// One of the slot's logical partitions mapped whole under a name of its
@@ -237,7 +267,7 @@ pub fn map_whole(slot: Slot, base_name: &str, name: &str, readonly: bool) -> Res
     let super_dev = super_device();
     let md = skyward_lp::read(&super_dev, slot.number())?;
     let devices = block_devices(&md, &super_dev)?;
-    let full = format!("{base_name}{}", slot.suffix());
+    let full = format!("{base_name}{}", suffix_of(&md, slot));
     let p = slot_partitions(&md, slot).into_iter().find(|p| p.name == full).with_context(|| format!("super holds no {full}"))?;
     let device = dm::create(name, &targets(p, &devices), readonly)?;
     Ok(Whole { name: name.into(), device, size: bytes(p) })
@@ -312,7 +342,8 @@ pub fn mount_one(slot: Slot, base_name: &str) -> Result<Mounted> {
     let super_dev = super_device();
     let md = skyward_lp::read(&super_dev, slot.number())?;
     let devices = block_devices(&md, &super_dev)?;
-    let name = format!("{base_name}{}", slot.suffix());
+    let suffix = suffix_of(&md, slot);
+    let name = format!("{base_name}{suffix}");
     let p = slot_partitions(&md, slot)
         .into_iter()
         .find(|p| p.name == name)
@@ -323,9 +354,9 @@ pub fn mount_one(slot: Slot, base_name: &str) -> Result<Mounted> {
         _ => None,
     };
     match status {
-        Some(_) if dm::status(&name)?.is_some() => mount_mapped(p, Path::new("/dev/block").join(dm_node(&name)?), slot),
-        Some((s, status)) => mount_snapshot(s, &md, &devices, p, &status, slot),
-        None => map_and_mount(p, &devices, slot),
+        Some(_) if dm::status(&name)?.is_some() => mount_mapped(p, Path::new("/dev/block").join(dm_node(&name)?), suffix),
+        Some((s, status)) => mount_snapshot(s, &md, &devices, p, &status, suffix),
+        None => map_and_mount(p, &devices, suffix),
     }
 }
 
@@ -367,6 +398,7 @@ pub fn unmount_one(slot: Slot, base_name: &str) -> Result<()> {
 /// The slot's partitions that are mapped and show on their mount points, in
 /// the order they were mapped.
 pub fn mounted_partitions(slot: Slot) -> Result<Vec<Mounted>> {
+    let suffix = suffix_of(&md, slot);
     let mut found = Vec::new();
     for entry in fs::read_dir("/sys/block").context("read /sys/block")? {
         let entry = entry?;
@@ -375,7 +407,9 @@ pub fn mounted_partitions(slot: Slot) -> Result<Vec<Mounted>> {
         let name_file = entry.path().join("dm/name");
         let name = fs::read_to_string(&name_file).with_context(|| format!("read {}", name_file.display()))?;
         let name = name.trim();
-        let Some(base) = name.strip_suffix(slot.suffix()) else { continue };
+        // A phone with no slots names its partitions without a suffix, so an
+        // empty one strips nothing and the name is the base as it is.
+        let Some(base) = name.strip_suffix(suffix) else { continue };
         let device = Path::new("/dev/block").join(&node);
         let mount_point = mount_point(base);
         let Some(shown) = mount::visible(&mount_point)? else { continue };
@@ -411,8 +445,9 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
 /// /metadata.
 pub fn unmount_partitions(slot: Slot) -> Result<()> {
     let md = skyward_lp::read(&super_device(), slot.number())?;
+    let suffix = suffix_of(&md, slot);
     for p in slot_partitions(&md, slot).into_iter().rev() {
-        unmap(&p.name, &mount_point(base(p, slot)))?;
+        unmap(&p.name, &mount_point(base(p, suffix)))?;
     }
     let metadata = Path::new(METADATA);
     let metadata_dev = devnum(Path::new(BY_NAME).join("metadata"))?;

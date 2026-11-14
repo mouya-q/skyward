@@ -904,7 +904,10 @@ fn read_folder(path: &Path) -> Result<Vec<FileRow>> {
 /// are started again from there whenever they end.
 fn read_mounts(services: &[Service]) -> Result<Vec<skyward_ui::app::MountRow>> {
     use skyward_ui::app::MountRow;
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    // A phone with one slot reports none, and still has partitions to show:
+    // its system is in whole partitions, read at the slot-A metadata copy
+    // super keeps them in.
+    let slot = skyward_vab::current_slot()?.unwrap_or(skyward_vab::Slot::A);
     let shown = skyward_vab::mounted_partitions(slot)?;
     let holders = skyward_block::mount::holders()?;
     let props = skyward_info::installed_props(slot)?;
@@ -912,8 +915,11 @@ fn read_mounts(services: &[Service]) -> Result<Vec<skyward_ui::app::MountRow>> {
     let mut rows = Vec::new();
     for base in skyward_vab::slot_bases(slot)? {
         let point = skyward_vab::mount_point(&base);
-        let name = format!("{base}{}", slot.suffix());
-        let mounted = shown.iter().find(|m| m.partition == name);
+        // The name a partition is mapped under is the base plus whatever
+        // suffix the phone writes, which is none where it has no slots.
+        let mounted = shown
+            .iter()
+            .find(|m| m.partition == base || m.partition.strip_suffix("_a") == Some(&base) || m.partition.strip_suffix("_b") == Some(&base));
         let mut using = BTreeSet::new();
         if let Some(m) = mounted {
             using.extend(holders.get(&skyward_block::devnum(&m.device)?).into_iter().flatten().cloned());

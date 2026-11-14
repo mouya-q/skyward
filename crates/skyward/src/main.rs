@@ -424,7 +424,10 @@ fn main() -> Result<()> {
 }
 
 fn booted_slot() -> Result<skyward_vab::Slot> {
-    skyward_vab::current_slot()?.context("not an A/B device")
+    // Work on a slot needs a slot to work on. The pages do not: they come up
+    // on a phone with one copy of its system by reading the partitions where
+    // super keeps them, which is what `suffix_of` reads off its metadata.
+    skyward_vab::current_slot()?.context("this phone keeps no slots: its system is in whole partitions")
 }
 
 fn lp(super_dev: &Path, slot: Option<u32>) -> Result<()> {
@@ -748,7 +751,22 @@ fn recovery() -> Result<()> {
             // erasing them, which may take super with them, and undoing
             // shared blocks, which writes to the slot's own.
             if !matches!(request.work, bcb::Work::Fastboot | bcb::Work::WipeAb { .. } | bcb::Work::UnshareBlocks) {
-                prepare(&cfg, booted_slot()?)?;
+                // A phone with no slots has no super to map for one, and the
+                // recovery still has to come up on it: the screen shows and
+                // the pages work, only what runs from the system is absent.
+                match skyward_vab::current_slot() {
+                    Ok(Some(slot)) => {
+                        // prepare() reports why it could not mount, and keeps
+                        // going, so the pages come up either way.
+                        prepare(&cfg, slot)?;
+                    }
+                    Ok(None) => {
+                        skyward_sys::kmsg("no slot: this phone keeps its system in whole partitions")?;
+                    }
+                    Err(e) => {
+                        skyward_sys::kmsg(&format!("no slot read: {e:#}"))?;
+                    }
+                }
             }
             let root = Path::new("/");
             ui::run(&cfg, &root.join(ramdisk::FONT), &root.join(ramdisk::MONO), request, Screen::Home, None)
