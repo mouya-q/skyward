@@ -59,13 +59,36 @@ Narrow, and each confined to what the phone's firmware requires.
    as well as a `.zip`.
 5. **`devices/umi.toml`** — the device configuration, every field taken from the
    phone.
+6. **`crates/skyward/src/main.rs`** — a phone with no slots no longer stops the
+   UI from starting: `booted_slot()`, which turned `Ok(None)` into an error
+   ("not an A/B device"), is replaced by a match on
+   `skyward_vab::current_slot()` — `Ok(Some(slot))` prepares as before,
+   anything else logs the fact to kmsg and carries on. The whole-partition
+   mount path below then does the work the slot path would have.
+7. **`crates/skyward-vab/src/partitions.rs`** — the suffix the logical
+   partitions actually carry in `super` is derived from the partition names the
+   metadata lists (`suffix_of`: `system_a` → `_a`, `system` → empty) instead of
+   assuming the slot's own `_a`/`_b`; every place that spelled a partition
+   name, matched one, or stripped a suffix (`slot_partitions`, `base`,
+   `map_and_mount`, `mount_snapshot`, `mount_mapped`, `slot_bases`,
+   `slot_sizes`, `map_whole`, `mount_one`, `mounted_partitions`,
+   `unmount_partitions`) follows the actual suffix, so whole-partition
+   (`no-slot`) phones mount. `skyward-info` and the mount list of the UI follow.
+8. **`crates/skyward/src/ui.rs`** — a panel that carries no normal-maximum
+   brightness property in its device-tree node, as an early-2024 DTB of a
+   2020 phone does, no longer fails the UI: the whole backlight range the
+   panel offers is then its normal maximum. (`qcom,mdss-dsi-bl-max-level` is
+   added as a pairing fallback: it pairs with itself, which scales nothing,
+   but makes the level the factory property of the Qualcomm pairing is
+   measured against readable when no `mi,*` pair exists.)
 
 ## Building
 
-The GitHub Actions workflow builds every `devices/*.toml` on a push, and `umi`
-is one of them. It takes the recovery image out of the stock fastboot package,
-verifies its SHA-256 against the configuration, and packs the recovery on top of
-it.
+The GitHub Actions workflow builds for `umi` alone on a plain push, as the
+phone this fork ports to; a tag, or a run by hand, still builds the devices it
+names, or every `devices/*.toml` when it names none. It takes the recovery
+image out of the stock fastboot package, verifies its SHA-256 against the
+configuration, and packs the recovery on top of it.
 
 The maker's own copy of that package (`cdnorg.d.miui.com`,
 `bigota.d.miui.com`) answers some requests and refuses others — it served a
@@ -127,10 +150,30 @@ Read this honestly; each line is a claim with its evidence.
     (14,055,186 bytes) and the DTB (1,613,904 bytes) are the stock bytes;
   - the AVB footer names the image size and points at the vbmeta image the
     packer wrote (`AVB0`, unsigned, as an unlocked bootloader wants).
-- **Compiled** — the CI run on commit `85934802` built the tools and this
-  device's recovery; `Lint and test` and `Build the recovery service and the
-  packer` both passed, and `Recovery for umi` produced the image above. NOT
-  RUN locally: no Rust toolchain on the phone (`rustup-init` cannot spawn
-  threads under this proot).
-- **Booted / Runtime / Hardware verified** — NOT RUN. Nothing has been flashed
-  to the phone from this port.
+- **Compiled** — the CI runs on commits `85934802`, `94065d1a`/`a935fe91` and
+  `07942dde` built the tools and this device's recovery; `Lint and test` and
+  `Build the recovery service and the packer` passed, and `Recovery for umi`
+  produced the image above. NOT RUN locally: no Rust toolchain on the phone
+  (`rustup-init` cannot spawn threads under this proot).
+- **Flashed** — three builds have been written to the `recovery` partition
+  with `dd`, each read back and checked byte for byte (write 134,217,728
+  bytes; read-back SHA-256 equal). The stock TWRP the phone carried was
+  backed up first, to
+  `backup/twrp_recovery_umi_20261114_111830.img` (134,217,728 bytes,
+  SHA-256 `f4d4d5a705246fea2faceab88bd97897ab38383c6b6c1b127bd749dc2449e673`,
+  verified: header v2, gzip ramdisk, 3674 entries, `twres`/`sbin` intact),
+  and the maker's own `recovery.img` from the fastboot package stays on the
+  computer as the rollback of record.
+- **Booted** — parts verified, whole not yet. The first build (`8593480`)
+  came up as far as `skyward: umi 0.2.0 recovery up … asking for Menu` and
+  then failed `not an A/B device` (found in `/sys/fs/pstore/console-ramoops-0`
+  after the boot); the panel and the backlight came up (`set backlight from
+  0 to 200`), the screen stayed dark. The second build (`a935fe9`) got
+  past that (the log shows `no slot: this phone keeps its system in whole
+  partitions`), only to fail at the panel's normal-maximum backlight
+  property: the DTB of `OS1.0.3.0` (early 2024) carries none of the `mi,*`
+  pairs the UI looks for, and the recovery looped failing every five seconds.
+  The third build (`07942dd`) carries the fix for that; **what it shows on
+  the screen has not been reported yet**.
+- **Runtime / Hardware verified** — NOT RUN. Mounting, wiping, installing,
+  MTP and the WLAN bring-up have not been tried from the recovery yet.
