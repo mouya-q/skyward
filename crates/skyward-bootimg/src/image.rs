@@ -129,7 +129,7 @@ impl BootImage {
                 // offset this layout gives it. A version 0 header has no such
                 // field and nothing to rewrite.
                 if matches!(v0.versioned, HeaderV0Versioned::V1 { .. } | HeaderV0Versioned::V2 { .. }) {
-                    let up = |n: usize| (n + page - 1) / page * page;
+                    let up = |n: usize| n.div_ceil(page) * page;
                     let kernel_start = up(out.len());
                     let ramdisk_start = up(kernel_start + self.kernel.len());
                     let second_start = up(ramdisk_start + self.ramdisk.len());
