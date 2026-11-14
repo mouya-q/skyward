@@ -134,7 +134,7 @@ pub fn open_clear() -> Result<Opening> {
 fn open_clear_partition() -> Result<Opened> {
     let entries = skyward_block::fstab::read(MOUNT)?;
     let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
-    let device = skyward_block::fstab::device(entry)?;
+    let device = PathBuf::from(skyward_block::fstab::device(entry)?);
     let holds = skyward_block::probe::filesystem(&device)?;
     let entry = entries.iter().find(|e| holds.as_ref() == Some(&e.filesystem)).unwrap_or(entry);
     let checked = match entry.extras.iter().any(|e| e == "check") {
@@ -151,30 +151,24 @@ fn open_clear_partition() -> Result<Opened> {
 pub fn clear_device() -> Result<PathBuf> {
     let entries = skyward_block::fstab::read(MOUNT)?;
     let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
-    skyward_block::fstab::device(entry)
+    Ok(PathBuf::from(skyward_block::fstab::device(entry)?))
 }
 
-/// Open the phone's data partition: unwrap the key it is encrypted with,
-/// give that to the storage hardware, check the filesystem where the
+/// Open a phone's encrypted data partition: unwrap the key it is encrypted
+/// with, give that to the storage hardware, check the filesystem where the
 /// phone's table asks for it, and mount it writable, as the phone mounts
 /// it. The names and contents of each user's own files stay encrypted
 /// until that user's key is let in as well. A partition that does not
-/// mount leaves no device behind.
+/// mount leaves no device behind. A phone that leaves its partition in the
+/// clear never reaches here; see [`open_clear_partition`].
 fn open(service: &KeyMint) -> Result<Opened> {
     let entries = skyward_block::fstab::read(MOUNT)?;
     let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
-    // Only a partition the phone encrypts gets a device-mapper layer over
-    // it; a clear one is read through the partition itself, and nothing is
-    // left behind of it when the mount fails.
-    let (mapped, layered) = match Encryption::of(entry)? {
-        Some(encryption) => {
-            let device = skyward_block::fstab::device(entry)?;
-            let key = storage_key(service, entry, &encryption)?;
-            let sectors = skyward_block::size_bytes(&device)? / 512;
-            (dm::create(MAPPED, &[target(&device, sectors, &key, &encryption)], false)?, true)
-        }
-        None => (skyward_block::fstab::device(entry)?, false),
-    };
+    let encryption = Encryption::of(entry)?.with_context(|| format!("{MOUNT} is not encrypted, so there is no key to open it with"))?;
+    let device = skyward_block::fstab::device(entry)?;
+    let key = storage_key(service, entry, &encryption)?;
+    let sectors = skyward_block::size_bytes(&device)? / 512;
+    let mapped = dm::create(MAPPED, &[target(&device, sectors, &key, &encryption)], false)?;
     let mounted = (|| -> Result<(Option<Checked>, String)> {
         // A phone that names the partition once per filesystem it might
         // hold mounts it with the entry of the one it holds.
@@ -190,7 +184,6 @@ fn open(service: &KeyMint) -> Result<Opened> {
     })();
     match mounted {
         Ok((checked, filesystem)) => Ok(Opened { mapped, filesystem, checked }),
-        Err(e) if !layered => Err(e),
         Err(e) => match dm::remove(MAPPED) {
             Ok(()) => Err(e),
             Err(r) => Err(e.context(format!("removing {MAPPED} afterwards failed too: {r:#}"))),
@@ -211,8 +204,7 @@ fn map(service: &KeyMint) -> Result<(Vec<Entry>, Option<PathBuf>)> {
         // secure world is never asked, which is what lets a phone with a
         // HIDL key service — one Skyward's AIDL KeyMint cannot speak to —
         // still have its data mounted.
-        let device = skyward_block::fstab::device(entry)?;
-        return Ok((entries, Some(device)));
+        return Ok((entries, Some(PathBuf::from(skyward_block::fstab::device(entry)?))));
     };
     let device = skyward_block::fstab::device(entry)?;
     let key = storage_key(service, entry, &encryption)?;
