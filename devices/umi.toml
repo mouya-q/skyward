@@ -41,6 +41,10 @@ path = "/vendor/bin/sh"
 args = ["/vendor/bin/init.qcom.post_boot.sh"]
 libraries = ["/system/lib64", "/vendor/lib64"]
 oneshot = true
+# The ported system's script ends in a chmod on a folder of a mounted data
+# partition, which a recovery mounts none of: what it set out to do by then
+# it has done, so its failure is said and the rest still start.
+best_effort = true
 user = "root"
 groups = ["root", "system", "wakelock", "graphics"]
 

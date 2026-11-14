@@ -354,6 +354,12 @@ pub struct Service {
     /// once it has ended, and it has to end well.
     #[serde(default)]
     pub oneshot: bool,
+    /// A program the installed system carries that its builder did not
+    /// build for a recovery runs on one anyway. It may fail on what a
+    /// recovery mounts none of: its failure is said to the kernel log,
+    /// and the programs after it still start.
+    #[serde(default)]
+    pub best_effort: bool,
     /// A property the program sets once it is ready for the rest. Programs
     /// are started in the order they are written, and one that says it has
     /// something to wait for holds up the ones after it.

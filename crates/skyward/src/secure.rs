@@ -332,12 +332,15 @@ fn say_framework(dir: &Path) -> Result<usize> {
 }
 
 /// Whether a description is of the service registered under `name`, which
-/// reads as the interface and then the instance: the description names the
-/// two separately.
+/// reads as the interface and then the instance. A description holds the
+/// interface and its instance either as one line of its own, or each in the
+/// tags a description names them in apart.
 fn describes(text: &str, name: &str) -> bool {
     let Some((interface, instance)) = name.rsplit_once('/') else { return false };
     let Some((package, interface)) = interface.rsplit_once('.') else { return false };
-    text.contains(package) && text.contains(&format!("{interface}/{instance}"))
+    text.contains(package)
+        && (text.contains(&format!("{interface}/{instance}"))
+            || (text.contains(&format!("<name>{interface}</name>")) && text.contains(&format!("<instance>{instance}</instance>"))))
 }
 
 /// Wait until the service directory is a new process and takes calls

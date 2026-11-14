@@ -51,8 +51,22 @@ pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
         let who = Credentials::of(&s, &known)?;
         if s.oneshot {
             let status = command(&s, &who).status().with_context(|| format!("run {}", s.path))?;
-            ensure!(status.success(), "{} {} ended: {status}", s.path, s.args.join(" "));
-            skyward_sys::kmsg(&format!("ran {} {}", s.path, s.args.join(" ")))?;
+            if !status.success() {
+                // A vendor's bring-up script ends in whatever it last tried
+                // on a recovery, as it does on the phone itself whenever the
+                // folder it ends with is not there; what it set out to do it
+                // has done by then. Its failure is said to the kernel log
+                // and the programs after it still start, where it runs
+                // best-effort.
+                let said = format!("{} {} ended: {status}", s.path, s.args.join(" "));
+                if s.best_effort {
+                    skyward_sys::kmsg(&said)?;
+                } else {
+                    anyhow::bail!(said);
+                }
+            } else {
+                skyward_sys::kmsg(&format!("ran {} {}", s.path, s.args.join(" ")))?;
+            }
             continue;
         }
         let waiting = s.clone();
