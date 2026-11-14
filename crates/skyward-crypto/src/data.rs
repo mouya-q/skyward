@@ -204,7 +204,8 @@ fn map(service: &KeyMint) -> Result<(Vec<Entry>, Option<PathBuf>)> {
         // secure world is never asked, which is what lets a phone with a
         // HIDL key service — one Skyward's AIDL KeyMint cannot speak to —
         // still have its data mounted.
-        return Ok((entries, Some(PathBuf::from(skyward_block::fstab::device(entry)?))));
+        let device = PathBuf::from(skyward_block::fstab::device(entry)?);
+        return Ok((entries, Some(device)));
     };
     let device = skyward_block::fstab::device(entry)?;
     let key = storage_key(service, entry, &encryption)?;
