@@ -190,7 +190,7 @@ fn take_stock_recovery(stock: &skyward_config::Stock, out: &Path) -> Result<()> 
     let sum = sha256_of(&image_path)?;
     ensure!(sum == stock.recovery, "the {RECOVERY} partition in {} has the SHA-256 {sum}, where the configuration names {}", stock.package, stock.recovery);
     std::fs::rename(&image_path, out).with_context(|| format!("move {} to {}", image_path.display(), out.display()))?;
-    let size = std::fs::metadata(&out).with_context(|| format!("stat {}", out.display()))?.len();
+    let size = std::fs::metadata(out).with_context(|| format!("stat {}", out.display()))?.len();
     println!("wrote {} ({} bytes), its SHA-256 the one the configuration names", out.display(), size);
     Ok(())
 }
