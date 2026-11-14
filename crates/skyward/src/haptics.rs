@@ -79,17 +79,12 @@ pub struct Periodic {
 
 /// An Awinic AW8697 motor, driven through the files its driver puts in
 /// sysfs. Its force-feedback bitmap carries no periodic effect, so the
-/// effect path above cannot reach it; the driver plays instead whatever
-/// `duration` says, at `gain`, once `activate` is written. Its mode has to
-/// be cleared first: left at 2, the mode the driver boots with, `activate`
-/// plays an empty waveform and the motor stays still.
+/// effect path above cannot reach it; the chip drives the motor itself at
+/// its resonant frequency in the continuous mode, which the driver starts
+/// and stops by the `cont` file.
 pub struct Aw8697 {
     dir: PathBuf,
     strength: Strength,
-    /// What was in the mode file before the first play, to be put back.
-    /// The phone's own system changes it under the recovery's feet.
-    mode: i32,
-    gain: u8,
 }
 
 /// What a click is.
@@ -135,21 +130,11 @@ impl Haptics {
 }
 
 impl Aw8697 {
-    /// The motor's sysfs folder, read for the two values its files are
-    /// written with: the mode it boots in, to be cleared before playing,
-    /// and the gain it carries, to be put back as it was.
+    /// The motor's sysfs folder.
     fn open(dir: &str, strength: Strength) -> Result<Aw8697> {
         let dir = PathBuf::from(dir);
         ensure!(dir.is_dir(), "{} is not the folder of a motor's files", dir.display());
-        let read = |name: &str| -> Result<String> {
-            let path = dir.join(name);
-            fs::read_to_string(&path).with_context(|| format!("read {}", path.display())).map(|t| t.trim().to_string())
-        };
-        // A motor whose driver takes no gain file, or keeps its gain in
-        // another form, is driven at whatever it has.
-        let mode = read("activate_mode").ok().and_then(|t| t.parse::<i32>().ok()).unwrap_or(2);
-        let gain = read("gain").ok().and_then(|t| parse_gain(&t)).unwrap_or(0x80);
-        Ok(Aw8697 { dir, strength, mode, gain })
+        Ok(Aw8697 { dir, strength })
     }
 
     /// Play one pulse at `share` of the motor's full strength. The chip
@@ -195,16 +180,6 @@ const CLICK_MS: u32 = 12;
 
 /// How long the ticks of the screen going off play on such a motor.
 const TICKS_MS: u32 = 24;
-
-/// A gain as the driver writes it, in hex with a `0x` in front, or in
-/// decimal.
-fn parse_gain(text: &str) -> Option<u8> {
-    let text = text.trim();
-    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-        Some(hex) => u8::from_str_radix(hex, 16).ok(),
-        None => text.parse().ok(),
-    }
-}
 
 impl Periodic {
     /// The force-feedback device and the configured click. Loading a click
