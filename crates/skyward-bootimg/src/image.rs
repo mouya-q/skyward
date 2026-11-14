@@ -56,11 +56,13 @@ impl BootImage {
     /// whatever fills the partition after it.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let header = Header::parse(&mut Cursor::new(bytes)).context("header")?;
-        match header {
+        // The sections are read while the header is only borrowed: the header
+        // is moved into the image once every section has taken its bytes.
+        let (kernel, ramdisk, trailer) = match &header {
             Header::V3(v3) => {
                 let kernel = section(bytes, HeaderV3::kernel_position(), v3.kernel_size, "kernel")?;
                 let ramdisk = section(bytes, v3.ramdisk_position(), v3.ramdisk_size, "ramdisk")?;
-                Ok(BootImage { header, kernel, ramdisk, trailer: None })
+                (kernel, ramdisk, None)
             }
             // The phones with a recovery partition of their own were last
             // built with header version 2, which ends in the DTB the
@@ -86,14 +88,10 @@ impl BootImage {
                         )
                     }
                 };
-                Ok(BootImage {
-                    header: Header::V0(v0),
-                    kernel,
-                    ramdisk,
-                    trailer: Some(Trailer { second_bootloader, recovery_dtbo, dtb }),
-                })
+                (kernel, ramdisk, Some(Trailer { second_bootloader, recovery_dtbo, dtb }))
             }
-        }
+        };
+        Ok(BootImage { header, kernel, ramdisk, trailer })
     }
 
     /// The image with sizes taken from its parts. A version 4 header keeps its
