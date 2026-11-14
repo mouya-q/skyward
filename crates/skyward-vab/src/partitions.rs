@@ -88,7 +88,7 @@ fn map_and_mount(p: &Partition, devices: &[(u32, u32)], suffix: &str) -> Result<
 /// phone with slots, nothing on a phone that keeps one copy of its system.
 /// Read off the names super holds rather than assumed from the slot, since
 /// that is the one place the two kinds of phone differ.
-pub(crate) fn suffix_of(md: &Metadata, slot: Slot) -> &'static str {
+pub fn suffix_of(md: &Metadata, slot: Slot) -> &'static str {
     for p in &md.partitions {
         for base in ["system", "vendor", "product", "odm", "system_ext"] {
             if p.name == base {
@@ -398,6 +398,7 @@ pub fn unmount_one(slot: Slot, base_name: &str) -> Result<()> {
 /// The slot's partitions that are mapped and show on their mount points, in
 /// the order they were mapped.
 pub fn mounted_partitions(slot: Slot) -> Result<Vec<Mounted>> {
+    let md = skyward_lp::read(&super_device(), slot.number())?;
     let suffix = suffix_of(&md, slot);
     let mut found = Vec::new();
     for entry in fs::read_dir("/sys/block").context("read /sys/block")? {

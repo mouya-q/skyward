@@ -211,11 +211,10 @@ pub fn installed_props(slot: Slot) -> Result<HashMap<String, String>> {
     let mut parts = skyward_vab::mounted_partitions(slot)?;
     // A partition mapped by the recovery keeps the name it has in super, with
     // the suffix the phone writes for the system's partitions: `_a` or `_b`
-    // where it has slots, nothing where it keeps one copy of its system. The
-    // suffix is read off the mounted names themselves.
-    let suffix = parts
-        .iter()
-        .find_map(|m| m.partition.strip_prefix("system").filter(|r| *r == "_a" || *r == "_b"))
+    // where it has slots, nothing where it keeps one copy of its system.
+    let suffix = skyward_vab::current_slot()?
+        .map(|s| s.suffix())
+        .filter(|s| parts.iter().any(|m| m.partition.ends_with(s)))
         .unwrap_or("");
     let base = |m: &skyward_vab::Mounted| -> String {
         m.partition.strip_suffix(suffix).unwrap_or(&m.partition).to_string()
