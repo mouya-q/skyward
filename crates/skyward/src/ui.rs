@@ -984,7 +984,7 @@ fn set_slot(slot: skyward_vab::Slot) -> Result<skyward_vab::BootSlots, String> {
 /// and the booted slot's partitions come off.
 fn detach(services: Vec<Service>) -> Detach {
     Box::new(move || {
-        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+        let slot = working_slot()?;
         let mounted = skyward_vab::mounted_partitions(slot)?;
         let busy = services::pin(&services, &mounted)?;
         skyward_vab::release_partitions(slot, &busy)
@@ -1006,9 +1006,19 @@ fn wlan_worker(w: &Option<wlan::Worker>) -> Result<&wlan::Worker> {
     w.as_ref().context("the phone's WLAN is not brought up")
 }
 
+/// The slot the pages work on: the one the phone boots, or, on a phone with
+/// no slots, the one its whole partitions stand in for. `suffix_of` reads the
+/// real suffix off super's metadata, so `Slot::A` names partitions that carry
+/// none, which is what a phone like `umi` keeps.
+fn working_slot() -> Result<skyward_vab::Slot> {
+    Ok(skyward_vab::current_slot()?.unwrap_or(skyward_vab::Slot::A))
+}
+
 /// The installed system, as the update server is told of it.
 fn installed(cfg: &DeviceConfig, info: &skyward_info::DeviceInfo) -> Result<Installed> {
-    let slot = info.slot.context("only an A/B phone is updated")?;
+    // A phone with no slots is not updated the A/B way; nothing on the
+    // update page can run on it.
+    let slot = info.slot.context("this phone keeps no slots: it is not updated the A/B way")?;
     let props = skyward_info::installed_props(slot)?;
     let prop = |name: &str| props.get(name).cloned().with_context(|| format!("the installed system says no {name}"));
     Ok(Installed {
@@ -1285,7 +1295,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
             part_worker = Some(partwork::Worker::start(partwork::Task::Disable { package_size: *package_size })?);
         }
         Work::UnshareBlocks => {
-            let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+            let slot = working_slot()?;
             app.part_work_started(PartKind::Unshare, true);
             part_worker = Some(partwork::Worker::start(partwork::Task::Unshare { slot })?);
         }
@@ -1354,6 +1364,8 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
         }
         app.set_update(standing);
     }
+    // A phone with no slots keeps no update to merge, so the merge page
+    // never starts on it; only the update page above asks whether one does.
     // The DNS servers the network joined gave, for looking names up.
     let servers: Servers = Arc::new(Mutex::new(Vec::new()));
     // The WLAN, on a phone whose driver the recovery brings up; it starts
@@ -1852,8 +1864,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
         if backed {
             backuper = None;
         }
-        if let Some(m) = &merger {
-            let slot = info.slot.context("only an A/B phone merges an update")?;
+        if let (Some(m), Some(slot)) = (&merger, info.slot) {
             for ev in m.events() {
                 match ev {
                     merge::Event::Looked(look) => {
@@ -2266,7 +2277,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                         installer = Some(Installer::open(PathBuf::from(path), detach(cfg.services.clone()), install_options(&app))?);
                     }
                     Effect::Flash { partition, pick } => {
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = working_slot()?;
                         installer.as_ref().context("no installer holds an image")?.flash(partition, pick.slots(slot));
                     }
                     Effect::Cancel => match &installer {
@@ -2365,7 +2376,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     // page's to report, with what to do first.
                     Effect::Relabel => {
                         ensure!(relabeler.is_none(), "relabeling is under way already");
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = working_slot()?;
                         match relabel::rule_files(slot) {
                             Ok(rules) => {
                                 relabeler = Some(filework::Worker::start(filework::Task::Relabel { rules })?);
@@ -2466,7 +2477,13 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     }
                     Effect::StopBackup => backuper.as_ref().context("there is no backup or restore to stop")?.stop(),
                     Effect::ReadUpdate => {
-                        let slot = info.slot.context("only an A/B phone has an update to merge")?;
+                        // Nothing on the update page runs on a phone with no
+                        // slots; the page is told so instead of the loop
+                        // failing, which takes the whole recovery down.
+                        let Some(slot) = info.slot else {
+                            app.report("this phone keeps no slots: it is not updated the A/B way", now);
+                            continue;
+                        };
                         // A merge followed tells where it stands itself.
                         if merger.is_none() {
                             app.set_update(skyward_vab::standing(slot)?);
@@ -2477,9 +2494,12 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     }
                     Effect::Merge => {
                         ensure!(merger.is_none(), "the update is being merged already");
-                        let slot = info.slot.context("only an A/B phone merges an update")?;
+                        let Some(slot) = info.slot else {
+                            app.report("this phone keeps no slots: it is not updated the A/B way", now);
+                            continue;
+                        };
                         skyward_sys::kmsg("merging the update, as the update page asked")?;
-                        merger = Some(merge::Merger::start(slot, true)?);
+merger = Some(merge::Merger::start(slot, true)?);
                     }
                     Effect::Wlan(on) => wlan_worker(&wlan)?.send(if on { wlan::Command::On } else { wlan::Command::Off }),
                     Effect::ScanWlan => {
@@ -2576,14 +2596,14 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     // A partition that will not mount, or is in use, is the
                     // page's to report; the recovery carries on.
                     Effect::Mount(base) => {
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = working_slot()?;
                         if let Err(e) = skyward_vab::mount_one(slot, &base) {
                             app.mount_failed(MountFailure { mounting: true, base, detail: format!("{e:#}") });
                         }
                         app.set_mounts(mounts());
                     }
                     Effect::Unmount(base) => {
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = working_slot()?;
                         if let Err(e) = skyward_vab::unmount_one(slot, &base) {
                             app.mount_failed(MountFailure { mounting: false, base, detail: format!("{e:#}") });
                         }
@@ -2593,7 +2613,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     // then the slot's partitions come up as at boot.
                     Effect::EnterRecovery => {
                         skyward_sys::usb::switch(skyward_sys::usb::resting(), USB_TIMEOUT)?;
-                        let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                        let slot = working_slot()?;
                         crate::prepare(cfg, slot)?;
                         read_at = Instant::now();
                         info = skyward_info::collect(cfg)?;

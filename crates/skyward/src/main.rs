@@ -751,9 +751,13 @@ fn recovery() -> Result<()> {
             // erasing them, which may take super with them, and undoing
             // shared blocks, which writes to the slot's own.
             if !matches!(request.work, bcb::Work::Fastboot | bcb::Work::WipeAb { .. } | bcb::Work::UnshareBlocks) {
-                // A phone with no slots has no super to map for one, and the
-                // recovery still has to come up on it: the screen shows and
-                // the pages work, only what runs from the system is absent.
+                // A phone with no slots keeps its system in whole partitions
+                // in super: the same mount path serves it, for the suffix its
+                // partitions carry is read off super's own metadata. What
+                // runs from the system — the WLAN's driver and supplicant,
+                // the key service the data partition opens with — needs
+                // those partitions mounted, so the no-slot path does all the
+                // slot path does, only without work on slots.
                 match skyward_vab::current_slot() {
                     Ok(Some(slot)) => {
                         // prepare() reports why it could not mount, and keeps
@@ -762,6 +766,9 @@ fn recovery() -> Result<()> {
                     }
                     Ok(None) => {
                         skyward_sys::kmsg("no slot: this phone keeps its system in whole partitions")?;
+                        // prepare() reports why it could not mount, and keeps
+                        // going, so the pages come up either way.
+                        prepare(&cfg, skyward_vab::Slot::A)?;
                     }
                     Err(e) => {
                         skyward_sys::kmsg(&format!("no slot read: {e:#}"))?;

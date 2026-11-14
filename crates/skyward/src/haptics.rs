@@ -58,7 +58,15 @@ const TICKS_REST: Duration = Duration::from_millis(40);
 /// playing after its samples have run out, even when told to stop, until
 /// the click is taken away. So each click is loaded as it is played, at the
 /// strength the slider gives, and taken away once it has played out.
-pub struct Haptics {
+///
+/// A motor whose driver takes no periodic effect is driven from its own
+/// files instead; see [`Aw8697`].
+pub enum Haptics {
+    Periodic(Periodic),
+    Aw8697(Aw8697),
+}
+
+pub struct Periodic {
     dev: File,
     click: Click,
     ticks: Click,
@@ -67,6 +75,21 @@ pub struct Haptics {
     /// away; a click taken away early by the next is not taken away again.
     playing: Arc<Mutex<Option<(i16, u64)>>>,
     clicks: u64,
+}
+
+/// An Awinic AW8697 motor, driven through the files its driver puts in
+/// sysfs. Its force-feedback bitmap carries no periodic effect, so the
+/// effect path above cannot reach it; the driver plays instead whatever
+/// `duration` says, at `gain`, once `activate` is written. Its mode has to
+/// be cleared first: left at 2, the mode the driver boots with, `activate`
+/// plays an empty waveform and the motor stays still.
+pub struct Aw8697 {
+    dir: PathBuf,
+    strength: Strength,
+    /// What was in the mode file before the first play, to be put back.
+    /// The phone's own system changes it under the recovery's feet.
+    mode: i32,
+    gain: u8,
 }
 
 /// What a click is.
@@ -80,10 +103,105 @@ enum Click {
 }
 
 impl Haptics {
+    /// The motor and the configured click. Loading a click fills the
+    /// driver's queue with what it plays, so the click is loaded only as it
+    /// is played.
+    pub fn open(cfg: &skyward_config::Haptics) -> Result<Haptics> {
+        if let Some(dir) = &cfg.aw8697 {
+            let motor = Aw8697::open(dir, cfg.strength)?;
+            eprintln!("haptics {}: clicks drive the motor through the driver's own files", motor.dir.display());
+            return Ok(Haptics::Aw8697(motor));
+        }
+        Ok(Haptics::Periodic(Periodic::open(cfg)?))
+    }
+
+    /// One short click at the strength the slider's `position` gives, after
+    /// taking away one still playing. Gives how long it plays.
+    pub fn click(&mut self, position: f32) -> Result<Duration> {
+        match self {
+            Haptics::Periodic(p) => p.start(false, share(&p.strength, position)),
+            Haptics::Aw8697(a) => a.play(share(&a.strength, position), false),
+        }
+    }
+
+    /// The ticks of the screen going off, as strong as the phone's own
+    /// system plays them whatever the slider says. Gives how long they play.
+    pub fn ticks(&mut self) -> Result<Duration> {
+        match self {
+            Haptics::Periodic(p) => p.start(true, TICKS_STRENGTH),
+            Haptics::Aw8697(a) => a.play(TICKS_STRENGTH, true),
+        }
+    }
+}
+
+impl Aw8697 {
+    /// The motor's sysfs folder, read for the two values its files are
+    /// written with: the mode it boots in, to be cleared before playing,
+    /// and the gain it carries, to be put back as it was.
+    fn open(dir: &str, strength: Strength) -> Result<Aw8697> {
+        let dir = PathBuf::from(dir);
+        ensure!(dir.is_dir(), "{} is not the folder of a motor's files", dir.display());
+        let read = |name: &str| -> Result<String> {
+            let path = dir.join(name);
+            fs::read_to_string(&path).with_context(|| format!("read {}", path.display())).map(|t| t.trim().to_string())
+        };
+        // A motor whose driver takes no gain file, or keeps its gain in
+        // another form, is driven at whatever it has.
+        let mode = read("activate_mode").ok().and_then(|t| t.parse::<i32>().ok()).unwrap_or(2);
+        let gain = read("gain").ok().and_then(|t| parse_gain(&t)).unwrap_or(0x80);
+        Ok(Aw8697 { dir, strength, mode, gain })
+    }
+
+    /// Play one pulse of `ms` at `share` of the motor's full strength,
+    /// writing the four files the driver plays from in the order it needs
+    /// them. The mode goes to 0 first: the driver boots at 2, where
+    /// `activate` plays an empty waveform and nothing moves.
+    fn play(&mut self, share: f32, ticks: bool) -> Result<Duration> {
+        // The ticks are two crisp pulses made by the driver's own wave; the
+        // files say how long one plays, so they play as one pulse each, the
+        // same as the click on this kind of motor.
+        let ms = if ticks { TICKS_MS } else { CLICK_MS };
+        let level = (share.clamp(0.0, 1.0) * f32::from(u8::MAX)).round() as u8;
+        self.write("activate_mode", &self.mode.to_string())?;
+        self.write("activate_mode", "0")?;
+        self.write("duration", &ms.to_string())?;
+        self.write("gain", &format!("{level:#04x}"))?;
+        self.write("activate", "1")?;
+        // The driver takes the mode back to the one it boots in by itself
+        // once the pulse has played; putting it back now would cut the pulse
+        // short on some builds, so only the gain is put back.
+        self.write("gain", &format!("{:#04x}", self.gain))?;
+        Ok(Duration::from_millis(u64::from(ms)))
+    }
+
+    fn write(&self, name: &str, value: &str) -> Result<()> {
+        let path = self.dir.join(name);
+        fs::write(&path, value).with_context(|| format!("write {value} to {}", path.display()))
+    }
+}
+
+/// How long a click plays on a motor driven by duration, as the phone's own
+/// system plays a key press: short enough to feel like a tap.
+const CLICK_MS: u32 = 12;
+
+/// How long the ticks of the screen going off play on such a motor.
+const TICKS_MS: u32 = 24;
+
+/// A gain as the driver writes it, in hex with a `0x` in front, or in
+/// decimal.
+fn parse_gain(text: &str) -> Option<u8> {
+    let text = text.trim();
+    match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        Some(hex) => u8::from_str_radix(hex, 16).ok(),
+        None => text.parse().ok(),
+    }
+}
+
+impl Periodic {
     /// The force-feedback device and the configured click. Loading a click
     /// fills the driver's queue with what it plays, so the click is loaded
     /// only as it is played.
-    pub fn open(cfg: &skyward_config::Haptics) -> Result<Haptics> {
+    fn open(cfg: &skyward_config::Haptics) -> Result<Periodic> {
         let (path, dev) = motor()?;
         let hz = resonance(&cfg.resonance)?;
         let click = match cfg.click {
@@ -97,19 +215,7 @@ impl Haptics {
             }
         };
         let ticks = Click::Samples { data: ticks(hz), rate: TICKS_RATE };
-        Ok(Haptics { dev, click, ticks, strength: cfg.strength, playing: Arc::new(Mutex::new(None)), clicks: 0 })
-    }
-
-    /// One short click at the strength the slider's `position` gives, after
-    /// taking away one still playing. Gives how long it plays.
-    pub fn click(&mut self, position: f32) -> Result<Duration> {
-        self.start(false, share(&self.strength, position))
-    }
-
-    /// The ticks of the screen going off, as strong as the phone's own
-    /// system plays them whatever the slider says. Gives how long they play.
-    pub fn ticks(&mut self) -> Result<Duration> {
-        self.start(true, TICKS_STRENGTH)
+        Ok(Periodic { dev, click, ticks, strength: cfg.strength, playing: Arc::new(Mutex::new(None)), clicks: 0 })
     }
 
     /// Play the ticks, or else the click, at `share` of its full strength,

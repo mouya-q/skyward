@@ -211,6 +211,13 @@ pub struct Haptics {
     /// driver plays the waveforms it keeps.
     #[serde(default)]
     pub click: Option<i16>,
+    /// The folder of an Awinic AW8697 motor's sysfs controls, as
+    /// `/sys/bus/i2c/devices/2-005a` on the `umi`. That driver takes no
+    /// periodic force-feedback effect — its bitmap carries none — but it
+    /// drives the motor from its own files: a duration in milliseconds, a
+    /// gain, and `activate` to play.
+    #[serde(default)]
+    pub aw8697: Option<String>,
     /// The file the driver says the motor's resonant frequency in, in
     /// tenths of a hertz whatever its label.
     pub resonance: String,
