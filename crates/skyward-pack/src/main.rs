@@ -216,9 +216,8 @@ fn sha256_of(path: &Path) -> Result<String> {
 /// the recovery image: the tarball holds the images one after another, and
 /// nothing of the ones after the recovery is read of it.
 fn take_from_tgz(stock: &skyward_config::Stock, work: &tempfile::TempDir) -> Result<()> {
-    use std::io::Read;
     let response = ureq::get(&stock.package).call().with_context(|| format!("open {}", stock.package))?;
-    let reader = response.into_reader();
+    let reader = response.into_body().into_reader();
     let gz = flate2::read::GzDecoder::new(reader);
     let mut tar = tar::Archive::new(gz);
     let mut found = false;

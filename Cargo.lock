@@ -2444,6 +2444,7 @@ dependencies = [
 name = "skyward-pack"
 version = "0.2.0"
 dependencies = [
+ "abootimg-oxide",
  "anyhow",
  "clap",
  "flate2",

@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 clap = { version = "4.5.51", features = ["derive"] }
 sha2 = "0.10.9"
+abootimg-oxide = "0.5.2"
 skyward-bootimg = { path = "../skyward-bootimg" }
 skyward-config = { path = "../skyward-config" }
 tempfile = "3.27.0"
