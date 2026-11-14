@@ -693,6 +693,24 @@ fn recovery() -> Result<()> {
         std::fs::set_permissions(skyward_sys::RUN, std::fs::Permissions::from_mode(0o755))
             .with_context(|| format!("open {} to the recovery's other users", skyward_sys::RUN))?;
         skyward_sys::keep_log(Path::new(skyward_sys::LOG))?;
+        // The persist partition outlives the boot. Mounted here, before
+        // anything that can fail, it takes the lines the recovery writes
+        // from here on, so that a run that ends short still leaves its say
+        // where the system can read it. The phone's own table names this
+        // partition's mount point and how it is mounted, but that table is
+        // out of reach here — it lives on the vendor partition — so the
+        // partition is mounted as it stands, and one an earlier step
+        // mounted already stays as it is.
+        {
+            let at = Path::new("/mnt/vendor/persist");
+            if !skyward_block::mount::is_mount_point(at).unwrap_or(false) {
+                let _ = std::fs::create_dir_all(at);
+                let _ = skyward_block::mount::mount(&Path::new(skyward_block::BY_NAME).join("persist"), at, "ext4", &[]);
+            }
+            if skyward_block::mount::is_mount_point(at).unwrap_or(false) {
+                skyward_sys::keep_lasting_log(&at.join("skyward.log"));
+            }
+        }
         // A recovery that ended with a function of its own in the port took
         // the port with it; going through "none" takes that function off.
         if skyward_sys::prop("sys.usb.state").is_some_and(|s| s != "adb") {
