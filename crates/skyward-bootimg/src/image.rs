@@ -123,6 +123,25 @@ impl BootImage {
                 v0.ramdisk_size = u32::try_from(self.ramdisk.len()).context("ramdisk size")?;
                 Header::V0(v0.clone()).write(&mut out).context("write header")?;
                 let page = v0.page_size as usize;
+                // The sections after the ramdisk move when the ramdisk changes
+                // size, and a version 1 or 2 header names where its recovery
+                // DTBO lands in the image, so that field is rewritten to the
+                // offset this layout gives it. A version 0 header has no such
+                // field and nothing to rewrite.
+                if matches!(v0.versioned, HeaderV0Versioned::V1 { .. } | HeaderV0Versioned::V2 { .. }) {
+                    let up = |n: usize| (n + page - 1) / page * page;
+                    let kernel_start = up(out.len());
+                    let ramdisk_start = up(kernel_start + self.kernel.len());
+                    let second_start = up(ramdisk_start + self.ramdisk.len());
+                    let dtbo_offset = up(second_start + second_bootloader.len());
+                    // boot_img_hdr_v1/v2: recovery_dtbo_size at 1632,
+                    // recovery_dtbo_offset at 1636, eight bytes.
+                    let at = 1636;
+                    let end = at + 8;
+                    if out.len() >= end {
+                        out[at..end].copy_from_slice(&(dtbo_offset as u64).to_le_bytes());
+                    }
+                }
                 pad(&mut out, page);
                 out.extend_from_slice(&self.kernel);
                 pad(&mut out, page);
