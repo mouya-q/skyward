@@ -84,11 +84,31 @@ impl Drop for Decryptor {
 /// Skyward speaks, and whose recovery has no binder device node at all —
 /// show its data.
 fn open() -> Result<Opening, String> {
-    let clear = data::is_clear().map_err(|e| format!("{e:#}"))?;
-    if clear {
-        return data::open_clear().map_err(|e| format!("{e:#}"));
+    // The table says whether the phone encrypts its data partition. Where
+    // the table cannot be read at all — a phone whose vendor partition did
+    // not come up, whose fstab files are elsewhere — the clear path is
+    // tried anyway: it is the only one that can work without the key
+    // service, and a partition it cannot mount says so in words the page
+    // shows.
+    match data::is_clear() {
+        Ok(true) => data::open_clear().map_err(|e| format!("{e:#}")),
+        Ok(false) => match with_key_service(data::open_without_credential) {
+            Ok(opened) => Ok(opened),
+            Err(why) => {
+                // The key service is out of reach — this phone's recovery
+                // carries no binder device at all. The table may name the
+                // encryption extras of a filesystem the phone has since
+                // formatted in the clear, as this phone's system port did,
+                // so the clear mount is tried before the error is given.
+                data::open_clear().map_err(|e2| format!("{why}; and in the clear: {e2:#}"))
+            }
+        },
+        Err(e) => {
+            // The table cannot be read; the clear path is the only one that
+            // can work without it.
+            data::open_clear().map_err(|e2| format!("{e:#}; and in the clear: {e2:#}"))
+        }
     }
-    with_key_service(data::open_without_credential)
 }
 
 /// Do `work` with the phone's key service, reached afresh for it, and say

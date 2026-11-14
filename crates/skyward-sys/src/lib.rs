@@ -174,7 +174,9 @@ pub const LOG: &str = "/skyward/run/recovery.log";
 /// The file [`kmsg`] writes its lines to as well, once [`keep_log`] opened
 /// it.
 static KEPT: OnceLock<Mutex<File>> = OnceLock::new();
-
+/// The file in the persist partition [`kmsg`] writes its lines to as well,
+/// once [`keep_lasting_log`] opened it, so that the lines outlive the boot.
+static LASTING: OnceLock<Mutex<File>> = OnceLock::new();
 /// Keep every line [`kmsg`] writes from now on in the file at `path` as
 /// well, after what an earlier run left there.
 pub fn keep_log(path: &Path) -> Result<()> {
@@ -182,15 +184,43 @@ pub fn keep_log(path: &Path) -> Result<()> {
     KEPT.set(Mutex::new(file)).map_err(|_| anyhow!("the log is kept in a file already"))
 }
 
+/// Keep every line [`kmsg`] writes in the persist partition too, where it
+/// outlives the boot: open the file at `path`, after what earlier runs left
+/// there. Failures do not fail the recovery — a partition that will not
+/// mount or fill takes no lines with it.
+pub fn keep_lasting_log(path: &Path) {
+    let file = OpenOptions::new().create(true).append(true).open(path);
+    match file {
+        Ok(file) => {
+            let _ = LASTING.set(Mutex::new(file));
+        }
+        Err(e) => {
+            let _ = kmsg(&format!("the lasting log at {} is not kept: {e}", path.display()));
+        }
+    }
+}
+
 /// Append a line to the kernel log, where it survives until the next boot
 /// and shows in `dmesg`, and to the file [`keep_log`] opened, stamped with
-/// the seconds since the phone started as the kernel log stamps it.
+/// the seconds since the phone started as the kernel log stamps it. The
+/// line goes to the persist partition too, when [`keep_log`] also opened a
+/// file there, so that the lines outlive the recovery: the ramdisk the
+/// recovery's own log lives on is gone with the boot, and the kernel log
+/// goes with it, but the lines in persist are there to read from the
+/// system afterwards.
 pub fn kmsg(line: &str) -> Result<()> {
     let mut f = OpenOptions::new().write(true).open("/dev/kmsg")?;
     f.write_all(format!("<6>skyward: {line}\n").as_bytes())?;
+    let stamped = format!("[{:>12.6}] {line}\n", since_boot()?.as_secs_f64());
     if let Some(kept) = KEPT.get() {
         let mut kept = kept.lock().expect("nothing panics while writing the log");
-        writeln!(kept, "[{:>12.6}] {line}", since_boot()?.as_secs_f64()).with_context(|| format!("write {LOG}"))?;
+        kept.write_all(stamped.as_bytes()).with_context(|| format!("write {LOG}"))?;
+    }
+    if let Some(lasting) = LASTING.get() {
+        let mut lasting = lasting.lock().expect("nothing panics while writing the log");
+        // The partition may fill or fail to mount; the lines it would have
+        // taken are not worth failing the recovery over.
+        let _ = lasting.write_all(stamped.as_bytes());
     }
     Ok(())
 }

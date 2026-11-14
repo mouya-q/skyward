@@ -152,25 +152,29 @@ impl Aw8697 {
         Ok(Aw8697 { dir, strength, mode, gain })
     }
 
-    /// Play one pulse of `ms` at `share` of the motor's full strength,
-    /// writing the four files the driver plays from in the order it needs
-    /// them. The mode goes to 0 first: the driver boots at 2, where
-    /// `activate` plays an empty waveform and nothing moves.
+    /// Play one pulse at `share` of the motor's full strength. The chip
+    /// drives the motor itself at its resonant frequency in the continuous
+    /// mode, which asks nothing of the RAM the driver plays from in the
+    /// modes around it: a cold recovery's RAM holds no waveform a mode 0
+    /// `activate` would play, and what it does hold — left by whatever ran
+    /// before — is heard as a rattle. So the mode goes to 1, the drive
+    /// starts and stops by `cont`, and the duration is kept by the recovery
+    /// rather than the driver.
     fn play(&mut self, share: f32, ticks: bool) -> Result<Duration> {
         let ms = if ticks { TICKS_MS } else { CLICK_MS };
         // The gain register takes 7 bits: 127 is the driver's full drive, and
         // anything above it wraps in the register and drives the motor with a
         // torn waveform, which is heard as a rattle rather than a tick.
         let level = (share.clamp(0.0, 1.0) * f32::from(GAIN_MAX)).round() as u8;
-        self.write("activate_mode", &self.mode.to_string())?;
-        self.write("activate_mode", "0")?;
-        self.write("duration", &ms.to_string())?;
+        self.write("activate_mode", "1")?;
+        self.write("cont", "0")?;
         self.write("gain", &format!("{:#04x}", level))?;
-        self.write("activate", "1")?;
-        // The driver takes the mode back to the one it boots in by itself
-        // once the pulse has played; putting it back now would cut the pulse
-        // short on some builds, so only the gain is put back.
-        self.write("gain", &format!("{:#04x}", self.gain))?;
+        self.write("cont", "1")?;
+        // The driver's mode change can take the gain with it; give it a
+        // moment to settle before the pulse starts.
+        std::thread::sleep(Duration::from_millis(2));
+        std::thread::sleep(Duration::from_millis(u64::from(ms)));
+        self.write("cont", "0")?;
         Ok(Duration::from_millis(u64::from(ms)))
     }
 

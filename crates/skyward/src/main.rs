@@ -513,6 +513,13 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
         let at = skyward_block::fstab::mount(name)?;
         skyward_sys::kmsg(&format!("{name} is mounted on {}", at.display()))?;
     }
+    // The lines the recovery writes from here on outlive the boot, in the
+    // persist partition: the ramdisk the recovery's own log lives on is
+    // gone with the boot, as the kernel log is, and a run that ends without
+    // a crash leaves nothing to read otherwise.
+    if let Ok(at) = skyward_block::fstab::mount("persist") {
+        skyward_sys::keep_lasting_log(&at.join("skyward.log"));
+    }
     for path in load_modules(cfg, &cfg.modules.load)? {
         skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
     }
