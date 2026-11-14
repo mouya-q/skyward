@@ -1,9 +1,9 @@
 name: Build
 
-# Every push is linted and tested, and the recovery is built for every
-# device in devices/, each image zipped. A tag starting with v publishes
-# those zips as a release, each shown as the phone it is for. Run by hand,
-# it can build for one device alone.
+# Every push is linted and tested, and the recovery is built for umi, as
+# the phone this fork ports to. A tag starting with v publishes those zips
+# as a release, each shown as the phone it is for. Run by hand, it can
+# build for one device alone, or every device when it names none.
 on:
   push:
     branches: ["**"]
@@ -77,7 +77,14 @@ jobs:
       - id: list
         env:
           DEVICE: ${{ inputs.device }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
+          # A plain push builds the recovery for umi alone; a tag, or a run by
+          # hand, keeps whatever device it names, or every device when it
+          # names none.
+          if [ "$REF_TYPE" != "tag" ] && [ -z "$DEVICE" ]; then
+            DEVICE=umi
+          fi
           if [ -n "$DEVICE" ]; then
             test -f "devices/$DEVICE.toml"
             echo "devices=$(jq -nc --arg device "$DEVICE" '[$device]')" >> "$GITHUB_OUTPUT"

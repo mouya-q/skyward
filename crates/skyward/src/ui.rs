@@ -180,11 +180,10 @@ fn normal_max(max: u32) -> Result<u32> {
     let Some((normal, full)) = NORMAL_MAX
         .iter()
         .find(|(normal, _)| node.join(normal).exists())
-        .map(|(normal, full)| (cell(normal), cell(full)))
-        .transpose()?
     else {
         return Ok(max);
     };
+    let (normal, full) = (cell(normal)?, cell(full)?);
     ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
     Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
 }
