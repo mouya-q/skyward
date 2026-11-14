@@ -51,15 +51,22 @@ pub struct Encryption {
 }
 
 impl Encryption {
-    /// Read what an entry of the phone's own table says.
-    pub fn of(entry: &Entry) -> Result<Encryption> {
-        let said = entry.extra("metadata_encryption").context("the phone says its data partition is not encrypted whole")?;
+    /// Read what an entry of the phone's own table says, if it says the
+    /// partition is encrypted at all. A table that names no
+    /// `metadata_encryption` describes a partition the phone leaves in the
+    /// clear, as an unlocked bootloader's flashing of a stock system without
+    /// the force-encrypt flag leaves it; the recovery mounts that as it
+    /// stands, with no key and no device-mapper layer.
+    pub fn of(entry: &Entry) -> Result<Option<Encryption>> {
+        let Some(said) = entry.extra("metadata_encryption") else {
+            return Ok(None);
+        };
         let (name, rest) = said.split_once(':').unwrap_or((said, ""));
         let cipher = CIPHERS
             .iter()
             .find_map(|(theirs, kernels)| (*theirs == name).then_some(*kernels))
             .with_context(|| format!("no cipher here is the {name} the phone names"))?;
-        Ok(Encryption { cipher: cipher.to_string(), wrapped: rest == "wrappedkey_v0" })
+        Ok(Some(Encryption { cipher: cipher.to_string(), wrapped: rest == "wrappedkey_v0" }))
     }
 }
 
@@ -98,6 +105,55 @@ pub struct Opened {
     pub checked: Option<Checked>,
 }
 
+/// Whether the phone leaves its data partition in the clear, which is what a
+/// table naming no `metadata_encryption` says. Such a partition is opened
+/// without the phone's key service at all: nothing on it is wrapped, so
+/// nothing has to be unwrapped, and a phone whose key service is HIDL — which
+/// Skyward's AIDL KeyMint cannot speak to — still has its data mounted.
+pub fn is_clear() -> Result<bool> {
+    let entries = skyward_block::fstab::read(MOUNT)?;
+    let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
+    Ok(Encryption::of(entry)?.is_none())
+}
+
+/// Mount the data partition of a phone that leaves it in the clear, and show
+/// the owner's shared storage. No key is unwrapped, no device-mapper layer is
+/// laid over the partition, and there are no users whose own files stay
+/// closed, for nothing on it is encrypted.
+pub fn open_clear() -> Result<Opening> {
+    let mounted = match mount::is_mount_point(Path::new(MOUNT))? {
+        true => None,
+        false => Some(open_clear_partition()?),
+    };
+    show_owner_storage()?;
+    Ok(Opening { mounted, closed: Vec::new() })
+}
+
+/// Mount a clear data partition, without the key service: the partition is
+/// what its filesystem is read through.
+fn open_clear_partition() -> Result<Opened> {
+    let entries = skyward_block::fstab::read(MOUNT)?;
+    let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
+    let device = skyward_block::fstab::device(entry)?;
+    let holds = skyward_block::probe::filesystem(&device)?;
+    let entry = entries.iter().find(|e| holds.as_ref() == Some(&e.filesystem)).unwrap_or(entry);
+    let checked = match entry.extras.iter().any(|e| e == "check") {
+        true => Some(skyward_block::fsck::check(&device, &entry.filesystem)?),
+        false => None,
+    };
+    std::fs::create_dir_all(MOUNT).with_context(|| format!("make {MOUNT}"))?;
+    mount::mount(&device, Path::new(MOUNT), &entry.filesystem, &entry.options)?;
+    Ok(Opened { mapped: device, filesystem: entry.filesystem.clone(), checked })
+}
+
+/// The device the data partition's filesystem is read through on a phone that
+/// leaves it in the clear, for repairing it without mounting.
+pub fn clear_device() -> Result<PathBuf> {
+    let entries = skyward_block::fstab::read(MOUNT)?;
+    let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
+    skyward_block::fstab::device(entry)
+}
+
 /// Open the phone's data partition: unwrap the key it is encrypted with,
 /// give that to the storage hardware, check the filesystem where the
 /// phone's table asks for it, and mount it writable, as the phone mounts
@@ -105,7 +161,20 @@ pub struct Opened {
 /// until that user's key is let in as well. A partition that does not
 /// mount leaves no device behind.
 fn open(service: &KeyMint) -> Result<Opened> {
-    let (entries, mapped) = map(service)?;
+    let entries = skyward_block::fstab::read(MOUNT)?;
+    let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
+    // Only a partition the phone encrypts gets a device-mapper layer over
+    // it; a clear one is read through the partition itself, and nothing is
+    // left behind of it when the mount fails.
+    let (mapped, layered) = match Encryption::of(entry)? {
+        Some(encryption) => {
+            let device = skyward_block::fstab::device(entry)?;
+            let key = storage_key(service, entry, &encryption)?;
+            let sectors = skyward_block::size_bytes(&device)? / 512;
+            (dm::create(MAPPED, &[target(&device, sectors, &key, &encryption)], false)?, true)
+        }
+        None => (skyward_block::fstab::device(entry)?, false),
+    };
     let mounted = (|| -> Result<(Option<Checked>, String)> {
         // A phone that names the partition once per filesystem it might
         // hold mounts it with the entry of the one it holds.
@@ -121,6 +190,7 @@ fn open(service: &KeyMint) -> Result<Opened> {
     })();
     match mounted {
         Ok((checked, filesystem)) => Ok(Opened { mapped, filesystem, checked }),
+        Err(e) if !layered => Err(e),
         Err(e) => match dm::remove(MAPPED) {
             Ok(()) => Err(e),
             Err(r) => Err(e.context(format!("removing {MAPPED} afterwards failed too: {r:#}"))),
@@ -131,15 +201,24 @@ fn open(service: &KeyMint) -> Result<Opened> {
 /// Map the data partition decrypted, under the key the phone keeps for it,
 /// and give its table's entries, the first the one the key is found by,
 /// and the device the filesystem is read and written through.
-fn map(service: &KeyMint) -> Result<(Vec<Entry>, PathBuf)> {
+fn map(service: &KeyMint) -> Result<(Vec<Entry>, Option<PathBuf>)> {
     let entries = skyward_block::fstab::read(MOUNT)?;
     let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
-    let encryption = Encryption::of(entry)?;
+    let Some(encryption) = Encryption::of(entry)? else {
+        // The phone leaves the partition in the clear: there is no key to
+        // unwrap and no device-mapper layer to lay over it, so the
+        // partition itself is what the filesystem is read through. The
+        // secure world is never asked, which is what lets a phone with a
+        // HIDL key service — one Skyward's AIDL KeyMint cannot speak to —
+        // still have its data mounted.
+        let device = skyward_block::fstab::device(entry)?;
+        return Ok((entries, Some(device)));
+    };
     let device = skyward_block::fstab::device(entry)?;
     let key = storage_key(service, entry, &encryption)?;
     let sectors = skyward_block::size_bytes(&device)? / 512;
     let mapped = dm::create(MAPPED, &[target(&device, sectors, &key, &encryption)], false)?;
-    Ok((entries, mapped))
+    Ok((entries, Some(mapped)))
 }
 
 /// Map the data partition decrypted without mounting it, for its
@@ -147,7 +226,8 @@ fn map(service: &KeyMint) -> Result<(Vec<Entry>, PathBuf)> {
 /// [`unmap`] takes it away again. The partition is to be closed.
 pub fn map_unmounted(service: &KeyMint) -> Result<PathBuf> {
     anyhow::ensure!(dm::status(MAPPED)?.is_none(), "the data partition is open");
-    map(service).map(|(_, mapped)| mapped)
+    // A clear partition gives itself, with no layer over it.
+    map(service)?.1.with_context(|| format!("{MOUNT} is not one the recovery can open"))
 }
 
 /// Take away the mapping [`map_unmounted`] made.

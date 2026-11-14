@@ -43,7 +43,7 @@ impl Decryptor {
             .name("decrypt".into())
             .spawn(move || {
                 let ended_as = match job {
-                    Job::Open => Ended::Opened(with_key_service(data::open_without_credential)),
+                    Job::Open => Ended::Opened(open()),
                     Job::Unlock { closed, user, credential } => {
                         Ended::Unlocked(with_key_service(|service| data::unlock(service, &closed, user, &credential)))
                     }
@@ -76,6 +76,19 @@ impl Drop for Decryptor {
             thread.join().expect("the decrypting thread does not panic");
         }
     }
+}
+
+/// Open the data partition, asking the phone's key service only where the
+/// phone encrypts it. A clear partition is mounted as it stands, which is
+/// what lets this phone — whose key service is HIDL, not the AIDL KeyMint
+/// Skyward speaks, and whose recovery has no binder device node at all —
+/// show its data.
+fn open() -> Result<Opening, String> {
+    let clear = data::is_clear().map_err(|e| format!("{e:#}"))?;
+    if clear {
+        return data::open_clear().map_err(|e| format!("{e:#}"));
+    }
+    with_key_service(data::open_without_credential)
 }
 
 /// Do `work` with the phone's key service, reached afresh for it, and say

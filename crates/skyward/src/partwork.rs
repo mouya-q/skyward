@@ -334,10 +334,17 @@ fn reach<T>(part: &Part, work: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
     match part {
         Part::Data => {
             crate::wipe::release_data()?;
+            // A phone that leaves the partition in the clear has no layer to
+            // take away afterwards; the partition is what the filesystem is
+            // reached through.
+            if data::is_clear()? {
+                let device = data::clear_device()?;
+                return work(&device);
+            }
             let mapped = crate::decrypt::with_key_service(data::map_unmounted).map_err(anyhow::Error::msg)?;
             let done = work(&mapped);
             data::unmap()?;
-            done
+done
         }
         Part::Entry(entry) => {
             let at = Path::new(&entry.mount_point);

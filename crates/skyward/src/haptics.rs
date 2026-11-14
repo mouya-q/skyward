@@ -157,15 +157,15 @@ impl Aw8697 {
     /// them. The mode goes to 0 first: the driver boots at 2, where
     /// `activate` plays an empty waveform and nothing moves.
     fn play(&mut self, share: f32, ticks: bool) -> Result<Duration> {
-        // The ticks are two crisp pulses made by the driver's own wave; the
-        // files say how long one plays, so they play as one pulse each, the
-        // same as the click on this kind of motor.
         let ms = if ticks { TICKS_MS } else { CLICK_MS };
-        let level = (share.clamp(0.0, 1.0) * f32::from(u8::MAX)).round() as u8;
+        // The gain register takes 7 bits: 127 is the driver's full drive, and
+        // anything above it wraps in the register and drives the motor with a
+        // torn waveform, which is heard as a rattle rather than a tick.
+        let level = (share.clamp(0.0, 1.0) * f32::from(GAIN_MAX)).round() as u8;
         self.write("activate_mode", &self.mode.to_string())?;
         self.write("activate_mode", "0")?;
         self.write("duration", &ms.to_string())?;
-        self.write("gain", &format!("{level:#04x}"))?;
+        self.write("gain", &format!("{:#04x}", level))?;
         self.write("activate", "1")?;
         // The driver takes the mode back to the one it boots in by itself
         // once the pulse has played; putting it back now would cut the pulse
@@ -179,6 +179,11 @@ impl Aw8697 {
         fs::write(&path, value).with_context(|| format!("write {value} to {}", path.display()))
     }
 }
+
+/// The gain register's full drive, in bits the driver takes: 7, so 127. A
+/// larger number wraps in the register, and the motor is driven by a torn
+/// waveform, heard as a rattle.
+const GAIN_MAX: u8 = 127;
 
 /// How long a click plays on a motor driven by duration, as the phone's own
 /// system plays a key press: short enough to feel like a tap.
