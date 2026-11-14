@@ -81,6 +81,24 @@ Narrow, and each confined to what the phone's firmware requires.
    added as a pairing fallback: it pairs with itself, which scales nothing,
    but makes the level the factory property of the Qualcomm pairing is
    measured against readable when no `mi,*` pair exists.)
+9. **`crates/skyward-crypto/src/data.rs`** — a phone whose table names no
+   `metadata_encryption` for the data partition leaves it in the clear, as
+   this phone's does (an f2fs with `inlinecrypt` and no encryption extra);
+   such a partition is mounted as it stands, with no key unwrapped, no
+   device-mapper layer, and — the part that matters here — **no key service
+   at all**. That is what makes the data partition mountable on this phone,
+   whose key service is HIDL and whose recovery carries no binder device.
+   `crates/skyward/src/decrypt.rs` reads the table first and only reaches
+   for the key service where the table says the partition is encrypted;
+   `crates/skyward/src/partwork.rs` repairs the filesystem of a clear
+   partition through the partition itself.
+10. **`crates/skyward/src/haptics.rs`** — the AW8697 motor is driven through
+    its own sysfs files (`activate_mode` cleared to 0, `duration`,
+    `gain`, `activate`), at a gain inside the driver's 7-bit register (127
+    full — a larger value wraps and drives the motor with a torn waveform,
+    heard as a rattle), for its force-feedback bitmap carries no periodic
+    effect. `devices/umi.toml` carries the `[haptics]` node pointing at the
+    motor's sysfs folder.
 
 ## Building
 
@@ -123,9 +141,16 @@ the stock `recovery.img` from the fastboot package to hand.
 
 - **No data decryption.** The phone's key service is HIDL `keymaster@4.x`;
   Skyward asks for the AIDL KeyMint device and finds none. The data partition
-  cannot be opened with the screen lock from the recovery.
-- **No vibration.** The AW8697 driver takes no periodic force-feedback effect,
-  which is the only path Skyward's click uses.
+  cannot be opened with the screen lock from the recovery — and this phone's
+  data partition is not encrypted at all (no `metadata_encryption` in its
+  fstab; plain f2fs), so it mounts without the key service anyway; see the
+  code changes below.
+- **Vibration is driven through the driver's own files.** The AW8697 driver
+  takes no periodic force-feedback effect, which is the only path Skyward's
+  click uses upstream; the port drives the motor through its sysfs files
+  instead, at the driver's own durations and gains. What plays is the
+  driver's RAM one-shot, not the made waveform the periodic path plays, so
+  the click is a plain pulse rather than a shaped one.
 - **Dual boot is not offered.** The phone has no slots.
 - **WLAN is untested on hardware.** The module, its firmware files and the
   supplicant are all present and configured from the phone; the bring-up path
