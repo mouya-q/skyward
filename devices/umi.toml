@@ -76,12 +76,16 @@ probe = "http://connect.rom.miui.com/generate_204"
 server = "https://update.miui.com/updates/miotaV3.php"
 
 # The stock build the recovery is made on: the Chinese system's HyperOS
-# 1.0.7.0, whose fastboot package on the phone maker's own download server
-# holds the recovery partition the recovery is built on top of.
+# 1.0.3.0, whose fastboot package held the recovery partition the recovery is
+# built on top of. The maker's own copy of that package answers some requests
+# and refuses others, so the file the build reads is the same tarball as the
+# maker's, holding only its recovery image, kept beside the build; the SHA-256
+# is of the recovery image as the maker's package holds it, and the build
+# checks it as it always does.
 [stock]
-version = "OS1.0.7.0.TJBCNXM"
-package = "https://bigota.d.miui.com/OS1.0.7.0.TJBCNXM/umi_images_OS1.0.7.0.TJBCNXM_20251101.0000.00_13.0_cn_479616fdc7.tgz"
-recovery = "0000000000000000000000000000000000000000000000000000000000000000"
+version = "OS1.0.3.0.TJBCNXM"
+package = "https://github.com/mouya-q/skyward/releases/download/umi-stock/umi_images_OS1.0.3.0.TJBCNXM_20240320.0000.00_13.0_cn_b616f9f481.tgz"
+recovery = "1f585ba45fd1a59909a706462c58b166a4ad6a0528558c76368fc1e274559597"
 
 # The partitions a backup of the baseband and EFS takes: the baseband's
 # settings, with the IMEI, and the sensors' calibration. And what of the
