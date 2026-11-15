@@ -1508,7 +1508,7 @@ fn finished(
         Outcome::Flashed { partition, slots } => {
             // A phone with no slots has one copy of the partition; the one
             // letter the report names is where it is, as the choice said.
-            let slots = match i.slot {
+            let slots = match cx.info.slot {
                 None => String::new(),
                 Some(_) => fmt::slots(l, slots),
             };
