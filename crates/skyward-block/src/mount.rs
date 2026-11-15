@@ -1,6 +1,8 @@
 /// Filesystems Android puts on logical and metadata partitions, in the order
-/// a device's fstab lists alternatives for one mount point.
-pub const FILESYSTEMS: [&str; 3] = ["erofs", "ext4", "f2fs"];
+/// a device's fstab lists alternatives for one mount point, with the one
+/// the firmware and other radio partitions carry — vfat — which the loader
+/// of their images reads them through.
+pub const FILESYSTEMS: [&str; 4] = ["erofs", "ext4", "f2fs", "vfat"];
 
 /// The words of a phone's mount options that the kernel takes as flags,
 /// as the phone's own fs_mgr reads them, with the kernel's bits for them

@@ -219,8 +219,12 @@ pub fn kmsg(line: &str) -> Result<()> {
     if let Some(lasting) = LASTING.get() {
         let mut lasting = lasting.lock().expect("nothing panics while writing the log");
         // The partition may fill or fail to mount; the lines it would have
-        // taken are not worth failing the recovery over.
+        // taken are not worth failing the recovery over. What it takes is
+        // flushed as it is written: a crash that takes the recovery with it
+        // — a watchdog reset among them — leaves nothing behind to read
+        // otherwise, as a filesystem replays only what its journal holds.
         let _ = lasting.write_all(stamped.as_bytes());
+        let _ = lasting.sync_all();
     }
     Ok(())
 }
