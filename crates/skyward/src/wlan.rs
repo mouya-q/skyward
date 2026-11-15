@@ -697,16 +697,29 @@ fn place(file: &Firmware) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
     let bytes = match &file.partition {
         None => fs::read(&file.path).with_context(|| format!("read {}", file.path))?,
-        Some(partition) => {
-            let at = Path::new(PARTITIONS).join(partition);
-            fs::create_dir_all(&at).with_context(|| format!("make {}", at.display()))?;
-            skyward_block::mount::mount_ro(&Path::new(skyward_block::BY_NAME).join(partition), &at)?;
-            let read = fs::read(at.join(&file.path)).with_context(|| format!("read {} on {partition}", file.path));
-            skyward_block::mount::umount(&at)?;
-            read?
-        }
+        Some(partition) => read_on_partition(partition, &file.path)?,
     };
     fs::write(&to, bytes).with_context(|| format!("write {}", to.display()))
+}
+
+/// A firmware file off a partition: where the recovery itself has that
+/// partition mounted, the file is read where it already is — the kernel
+/// takes a second mount of a block device only as read-only again, and
+/// refuses one of a partition the recovery holds open, as the persist the
+/// recovery mounts at boot and takes its logs from. Otherwise the
+/// partition is mounted at a place of its own for the read.
+fn read_on_partition(partition: &str, path: &str) -> Result<Vec<u8>> {
+    let device = Path::new(skyward_block::BY_NAME).join(partition);
+    if let Some(point) = skyward_block::mount::points_of(skyward_block::devnum(&device)?).into_iter().next() {
+        let name = Path::new(path);
+        return fs::read(point.join(name.strip_prefix("/").unwrap_or(name))).with_context(|| format!("read {} on {partition}", path));
+    }
+    let at = Path::new(PARTITIONS).join(partition);
+    fs::create_dir_all(&at).with_context(|| format!("make {}", at.display()))?;
+    skyward_block::mount::mount_ro(&device, &at)?;
+    let read = fs::read(at.join(path)).with_context(|| format!("read {} on {partition}", path));
+    skyward_block::mount::umount(&at)?;
+    read?
 }
 
 /// Start the supplicant on the interface, and wait for its control socket.

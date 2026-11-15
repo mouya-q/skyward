@@ -173,9 +173,16 @@ pub fn device_config<R: Read + Seek>(file: &mut R) -> Result<Option<Vec<u8>>> {
     find(ramdisk, |name| name == skyward_config::ramdisk::CONFIG, read).context("read the ramdisk")
 }
 
-/// The partition `name` of `slot` among the links in `dir`.
+/// The partition `name` of `slot` among the links in `dir`: the name with
+/// the slot's suffix where the phone writes one for that partition, and
+/// the name without it where it keeps but one copy of its system, as the
+/// links of a phone like the `umi` are.
 pub fn device(dir: &Path, name: &str, slot: Slot) -> PathBuf {
-    dir.join(format!("{name}{}", slot.suffix()))
+    let named = dir.join(format!("{name}{}", slot.suffix()));
+    if named.try_exists().unwrap_or(false) {
+        return named;
+    }
+    dir.join(name)
 }
 
 /// The partitions `kind` fits that this phone has in both slots, among the

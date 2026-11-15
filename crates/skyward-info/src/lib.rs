@@ -152,7 +152,7 @@ pub fn collect(cfg: &DeviceConfig) -> Result<DeviceInfo> {
         ram_kib: mem_total(&read("/proc/meminfo")?)?,
         panel: (d.width > 0 && d.height > 0).then_some((d.width, d.height)),
         screen: d.diagonal,
-        os_version: system.get(&cfg.device.os_version_prop),
+        os_version: os_version(cfg, &system),
         android: system.get("ro.build.version.release"),
         locale: system.get("ro.product.locale"),
         security_patch: system.get("ro.build.version.security_patch").map(|s| s.parse()).transpose()?,
@@ -163,6 +163,23 @@ pub fn collect(cfg: &DeviceConfig) -> Result<DeviceInfo> {
         snapshot: skyward_vab::snapshot_state()?,
         boot: Boot { unlocked, verified: skyward_block::boot_param("androidboot.verifiedbootstate")? },
     })
+}
+
+/// The version of the OS the installed system carries, as its maker names
+/// it: the configured property's value, with the configured word put before
+/// it that names the OS, and a sub-version after it when the configured
+/// property has one, as `HyperOS4.0.29.0.XEOCNXM.D01`.
+fn os_version(cfg: &DeviceConfig, system: &SystemProps) -> Option<String> {
+    let version = system.get(&cfg.device.os_version_prop)?;
+    let mut shown = match &cfg.device.os_version_prefix {
+        Some(prefix) => format!("{prefix}{version}"),
+        None => version,
+    };
+    if let Some(sub) = cfg.device.os_version_sub_prop.as_deref().and_then(|name| system.get(name)) {
+        shown.push('.');
+        shown.push_str(&sub);
+    }
+    Some(shown)
 }
 
 /// Build properties of the system the About page describes.
@@ -181,7 +198,10 @@ impl SystemProps {
         }
         let props = match skyward_vab::current_slot()? {
             Some(slot) => installed_props(slot)?,
-            None => HashMap::new(),
+            // A phone with no slots keeps one copy of its system in whole
+            // partitions, which the recovery mounts as the first slot's: the
+            // properties of the system that starts are read the same way.
+            None => installed_props(skyward_vab::Slot::A)?,
         };
         Ok(SystemProps::Installed(props))
     }

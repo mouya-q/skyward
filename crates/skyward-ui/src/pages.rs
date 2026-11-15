@@ -1221,14 +1221,23 @@ pub fn installing(cx: &Ctx) -> Frame {
             let parts = widgets::list(&mut c, t, f, y, &rows);
             let choose: Vec<Action> = (0..choice.partitions.len()).map(Action::FlashPartition).collect();
             out.extend(hits(&parts.rows, &choose));
-            let y = widgets::section(&mut c, t, f, parts.bottom, l.pick(["槽位", "槽位", "Slot"]));
-            let titles = Pick::ALL.map(|p| pick_title(l, p, i.slot));
-            let rows: Vec<Row> =
-                Pick::ALL.iter().zip(&titles).map(|(p, title)| Row::new(title).trail(Trail::Check(*p == choice.pick))).collect();
-            let picks = widgets::list(&mut c, t, f, y, &rows);
-            out.extend(hits(&picks.rows, &Pick::ALL.map(Action::FlashSlots)));
+            // A phone with no slots has one copy of each partition: nothing
+            // to choose between, so the one it has is written and no other
+            // choice is offered.
+            let picks_bottom = match i.slot {
+                None => parts.bottom,
+                Some(_) => {
+                    let y = widgets::section(&mut c, t, f, parts.bottom, l.pick(["槽位", "槽位", "Slot"]));
+                    let titles = Pick::ALL.map(|p| pick_title(l, p, i.slot));
+                    let rows: Vec<Row> =
+                        Pick::ALL.iter().zip(&titles).map(|(p, title)| Row::new(title).trail(Trail::Check(*p == choice.pick))).collect();
+                    let picks = widgets::list(&mut c, t, f, y, &rows);
+                    out.extend(hits(&picks.rows, &Pick::ALL.map(Action::FlashSlots)));
+                    picks.bottom
+                }
+            };
             let (label, danger) = confirm_label(Confirm::Flash, cx.state);
-            let track = widgets::confirm(&mut c, t, f, picks.bottom + t.m.dp(28.0), label, danger, s.confirm);
+            let track = widgets::confirm(&mut c, t, f, picks_bottom + t.m.dp(28.0), label, danger, s.confirm);
             out.push(Hit { rect: track, action: Action::Confirm(Confirm::Flash) });
             let note = l.pick(match s.source {
                 Source::Computer => [
@@ -1497,7 +1506,12 @@ fn finished(
             afterwards_of(c, cx, y, true)
         }
         Outcome::Flashed { partition, slots } => {
-            let slots = fmt::slots(l, slots);
+            // A phone with no slots has one copy of the partition; the one
+            // letter the report names is where it is, as the choice said.
+            let slots = match i.slot {
+                None => String::new(),
+                Some(_) => fmt::slots(l, slots),
+            };
             let detail = tr!(l, "{partition} 已刷入{slots}。", "{partition} 已刷入{slots}。", "Flashed to {partition} in {slots}.");
             let y = widgets::list(c, t, f, top, &[standing(l.pick(["刷入成功", "刷入成功", "Flashed"]), GREEN, Icon::Install, &detail)]).bottom;
             let mut rows = vec![restart];

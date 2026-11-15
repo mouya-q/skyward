@@ -10,7 +10,12 @@ model = "Xiaomi Mi 10"
 # No slots: the phone's boot, recovery and dtbo partitions are single.
 ab = false
 soc = { hans = "骁龙®865移动平台", hant = "Snapdragon® 865 行動平台", en = "Snapdragon® 865 Mobile Platform" }
-os_version_prop = "ro.build.version.incremental"
+os_version_prop = "ro.mi.os.version.incremental"
+# The maker names its OS as this, before the version; and a hotfix its its
+# own partition carries after it, as the pages name what runs: HyperOS
+# 4.0.29.0.XEOCNXM.D01, the sub-version from mi_ext's own build.prop.
+os_version_prefix = "HyperOS"
+os_version_sub_prop = "ro.mi.xms.version.incremental"
 
 [display]
 width = 1080

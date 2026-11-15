@@ -278,6 +278,14 @@ pub struct Device {
     /// System property that carries the vendor OS version.
     #[serde(default = "default_os_version_prop")]
     pub os_version_prop: String,
+    /// The word put before the vendor OS version that names the OS as its
+    /// maker does, such as `Hyper` before `OS4.0.29.0`.
+    #[serde(default)]
+    pub os_version_prefix: Option<String>,
+    /// System property that carries a sub-version of the OS, shown after
+    /// the version itself, as the maker's own partition keeps a hotfix.
+    #[serde(default)]
+    pub os_version_sub_prop: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
