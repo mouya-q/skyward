@@ -23,9 +23,11 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// The first folder the firmware loader looks in that a recovery can
-/// write.
-const FIRMWARE: &str = "/etc/firmware";
+/// The folder the kernel's firmware loader looks in first, which a
+/// recovery carries none of its own: what a driver asks for is put here
+/// before the driver is brought up, for the kernel to find without asking
+/// anything else.
+const FIRMWARE: &str = "/lib/firmware";
 
 /// Where a partition a firmware file is read from is mounted meanwhile.
 const PARTITIONS: &str = "/skyward/wlan";
