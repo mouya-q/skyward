@@ -56,26 +56,28 @@ groups = ["root", "system", "wakelock", "graphics"]
 # WLAN: the WCN3988 on the phone's PCIe, driven from the kernel the
 # recovery runs: the ported system's kernel carries the driver built in
 # (module `wlan`, with `cnss2` beside it), so no module is loaded. The
-# driver asks the kernel's firmware loader for the chip's own images by
-# plain names — amss.bin, bdwlan.bin, regdb.bin and the cfg and MAC the
-# phone's own links carry — which the kernel looks for under /lib/firmware
-# before anything else; the modem partition keeps the images themselves in
-# its own qca6390 folder, named with the fallback names the loader also
-# looks for, so every one is copied under both names for the loader to
-# find whichever it asks for. Once fs_ready is written, cnss2 powers the
-# chip up and loads its firmware, and wlan0 appears. The MAC address comes
-# from where the phone itself keeps it, at the top of persist.
+# cnss layer adds the chip's own folder to the firmware names it asks the
+# kernel's loader for — qca6390/amss.bin, qca6390/bdwlan.bin,
+# qca6390/m3.bin, qca6390/regdb.bin — and qcacld asks for the cfg and the
+# MAC under wlan/qca_cld/qca6390/; the kernel looks for all of them under
+# /lib/firmware before anything else. The modem partition keeps the images
+# themselves in its own qca6390 folder, named with the fallback names the
+# driver also looks for, so every one is copied under both names for the
+# loader to find whichever it asks for. Once fs_ready is written, cnss2
+# powers the chip up and loads its firmware, and wlan0 appears. The MAC
+# address comes from where the phone itself keeps it, at the top of
+# persist.
 [wlan]
 modules = []
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
 firmware = [
     { name = "wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/qca6390/WCNSS_qcom_cfg.ini" },
     { name = "wlan/qca_cld/qca6390/wlan_mac.bin", partition = "persist", path = "wlan_mac.bin" },
-    { name = "amss.bin", partition = "modem", path = "image/qca6390/amss20.bin" },
-    { name = "amss20.bin", partition = "modem", path = "image/qca6390/amss20.bin" },
-    { name = "m3.bin", partition = "modem", path = "image/qca6390/m3.bin" },
-    { name = "bdwlan.bin", partition = "modem", path = "image/qca6390/bdwlan.elf" },
-    { name = "regdb.bin", partition = "modem", path = "image/qca6390/regdb.bin" },
+    { name = "qca6390/amss.bin", partition = "modem", path = "image/qca6390/amss20.bin" },
+    { name = "qca6390/amss20.bin", partition = "modem", path = "image/qca6390/amss20.bin" },
+    { name = "qca6390/m3.bin", partition = "modem", path = "image/qca6390/m3.bin" },
+    { name = "qca6390/bdwlan.bin", partition = "modem", path = "image/qca6390/bdwlan.elf" },
+    { name = "qca6390/regdb.bin", partition = "modem", path = "image/qca6390/regdb.bin" },
 ]
 interface = "wlan0"
 supplicant = "/vendor/bin/hw/wpa_supplicant"
