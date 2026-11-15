@@ -708,10 +708,9 @@ impl KernelLog {
         // The log is read without waiting: a read with nothing new to say
         // comes back at once rather than holding the thread until the
         // kernel says something.
-        let read = std::fs::File::open("/dev/kmsg").ok().map(|f| {
+        let read = std::fs::File::open("/dev/kmsg").ok().inspect(|f| {
             use std::os::fd::AsRawFd;
             unsafe { libc::fcntl(f.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
-            f
         });
         KernelLog { read, lines: std::collections::VecDeque::new() }
     }
