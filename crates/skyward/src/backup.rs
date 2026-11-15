@@ -345,7 +345,10 @@ fn no_update() -> Result<()> {
 }
 
 fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<PathBuf> {
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    // A phone with no slots keeps one copy of its system in whole partitions,
+    // which the first slot's metadata lays out: its partitions are backed up
+    // the same way a slot's are.
+    let slot = skyward_vab::current_slot()?.unwrap_or(skyward_vab::Slot::A);
     let [boot, system, data, efs] = t.parts;
     if system {
         no_update()?;
@@ -360,7 +363,14 @@ fn backup(t: BackupTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<Pa
         // whose boot set goes back into them first.
         skyward_systems::install::ensure_installed()?;
         for name in BOOT {
-            let device = partition(&format!("{name}{}", slot.suffix()));
+            // The links carry the slot's suffix where the phone writes one
+            // for a partition, and the name alone where it keeps but one
+            // copy of its system, as a phone with no slots does.
+            let named = partition(&format!("{name}{}", slot.suffix()));
+            let device = match named.try_exists() {
+                Ok(true) => named,
+                _ => partition(name),
+            };
             if device.exists() {
                 let size = skyward_block::size_bytes(&device)?;
                 plan.push((Part::Boot, name.to_string(), Source::Block(device), size));
@@ -496,7 +506,10 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
     if manifest.device != t.device {
         return Err(Refusal::OtherPhone(manifest.device).into());
     }
-    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+    // A phone with no slots keeps one copy of its system in whole partitions,
+    // which the first slot's metadata lays out: its partitions are restored
+    // the same way a slot's are.
+    let slot = skyward_vab::current_slot()?.unwrap_or(skyward_vab::Slot::A);
     let mut items: Vec<&Item> = manifest.items.iter().filter(|i| t.parts[index(i.part)]).collect();
     ensure!(!items.is_empty(), "nothing chosen to restore is in the backup");
     items.sort_by_key(|i| RESTORE_ORDER.iter().position(|&p| p == i.part));
@@ -587,7 +600,16 @@ fn restore(t: RestoreTask, tell: &dyn Fn(Event), cancel: &AtomicBool) -> Result<
 fn target(item: &Item, slot: Slot) -> PathBuf {
     match item.part {
         Part::Efs => partition(&item.name),
-        _ => partition(&format!("{}{}", item.name, slot.suffix())),
+        // The links carry the slot's suffix where the phone writes one for a
+        // partition, and the name alone where it keeps but one copy of its
+        // system, as a phone with no slots does.
+        _ => {
+            let named = partition(&format!("{}{}", item.name, slot.suffix()));
+            match named.try_exists() {
+                Ok(true) => named,
+                _ => partition(&item.name),
+            }
+        }
     }
 }
 
