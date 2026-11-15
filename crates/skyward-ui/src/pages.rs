@@ -1506,13 +1506,15 @@ fn finished(
             afterwards_of(c, cx, y, true)
         }
         Outcome::Flashed { partition, slots } => {
-            // A phone with no slots has one copy of the partition; the one
-            // letter the report names is where it is, as the choice said.
-            let slots = match cx.info.slot {
-                None => String::new(),
-                Some(_) => fmt::slots(l, slots),
+            // A phone with no slots has one copy of the partition, so the
+            // report names the partition alone.
+            let detail = match cx.info.slot {
+                None => tr!(l, "{partition} 已刷入。", "{partition} 已刷入。", "Flashed to {partition}."),
+                Some(_) => {
+                    let slots = fmt::slots(l, slots);
+                    tr!(l, "{partition} 已刷入{slots}。", "{partition} 已刷入{slots}。", "Flashed to {partition} in {slots}.")
+                }
             };
-            let detail = tr!(l, "{partition} 已刷入{slots}。", "{partition} 已刷入{slots}。", "Flashed to {partition} in {slots}.");
             let y = widgets::list(c, t, f, top, &[standing(l.pick(["刷入成功", "刷入成功", "Flashed"]), GREEN, Icon::Install, &detail)]).bottom;
             let mut rows = vec![restart];
             let mut acts = vec![Action::RebootTo(Target::System)];

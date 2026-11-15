@@ -710,7 +710,7 @@ fn place(file: &Firmware) -> Result<()> {
 /// partition is mounted at a place of its own for the read.
 fn read_on_partition(partition: &str, path: &str) -> Result<Vec<u8>> {
     let device = Path::new(skyward_block::BY_NAME).join(partition);
-    if let Some(point) = skyward_block::mount::points_of(skyward_block::devnum(&device)?).into_iter().next() {
+    if let Some(point) = skyward_block::mount::points_of(skyward_block::devnum(&device)?)?.into_iter().next() {
         let name = Path::new(path);
         return fs::read(point.join(name.strip_prefix("/").unwrap_or(name))).with_context(|| format!("read {} on {partition}", path));
     }
@@ -719,7 +719,7 @@ fn read_on_partition(partition: &str, path: &str) -> Result<Vec<u8>> {
     skyward_block::mount::mount_ro(&device, &at)?;
     let read = fs::read(at.join(path)).with_context(|| format!("read {} on {partition}", path));
     skyward_block::mount::umount(&at)?;
-    read?
+    read
 }
 
 /// Start the supplicant on the interface, and wait for its control socket.
