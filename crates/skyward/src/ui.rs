@@ -1133,6 +1133,23 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
     let mut decryptor: Option<Decryptor> = None;
     let mut closed: Vec<Closed> = Vec::new();
     let mut arriving = Some(Incoming::Arrived);
+    // A data partition the phone keeps in the clear opens on its own as the
+    // pages come up, so that no page that needs what it holds — backups,
+    // screenshots, the file manager — waits for it: the decrypt page only
+    // shows how the opening went, and a locked one stays for the page to
+    // ask. Where the table cannot be read, the opening itself says so.
+    if first != Screen::Fastboot
+        && first != Screen::CantStart
+        && first != Screen::Unhandled
+        && matches!(skyward_crypto::data::is_clear(), Ok(true))
+    {
+        for fx in app.open_data() {
+            if let Effect::OpenData = fx {
+                ensure!(decryptor.is_none(), "the data partition is being opened already");
+                decryptor = Some(Decryptor::start(decrypt::Job::Open)?);
+            }
+        }
+    }
     // The mount page shows the partitions as they are when it opens and
     // after each change; why they cannot be read is the page's to say.
     let mounts = || read_mounts(&cfg.services).map_err(|e| format!("{e:#}"));
