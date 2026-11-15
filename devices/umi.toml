@@ -53,20 +53,24 @@ best_effort = true
 user = "root"
 groups = ["root", "system", "wakelock", "graphics"]
 
-# WLAN: the WCN3988 on the phone's PCIe, driven from the kernel the
-# recovery runs: the ported system's kernel carries the driver built in
-# (module `wlan`, with `cnss2` beside it), so no module is loaded. The
-# cnss layer adds the chip's own folder to the firmware names it asks the
-# kernel's loader for — qca6390/amss.bin, qca6390/bdwlan.bin,
+# WLAN: the WCN3988 on the phone's PCIe, driven by the qcacld driver the
+# kernel carries built in, as its own name says it does — `wlan_hdd_qca6390`
+# registers its char device as the kernel starts, before anything else runs,
+# and the kernel carries `cnss2` beside it, which powers the chip and loads
+# its firmware once the driver has registered with it and the filesystem is
+# ready. The module the vendor partition carries is for the stock kernel's
+# own build (its vermagic names it) and loads nowhere else, so none is
+# loaded. The cnss layer adds the chip's own folder to the firmware names
+# it asks the kernel's loader for — qca6390/amss.bin, qca6390/bdwlan.bin,
 # qca6390/m3.bin, qca6390/regdb.bin — and qcacld asks for the cfg and the
 # MAC under wlan/qca_cld/qca6390/; the kernel looks for all of them under
 # /lib/firmware before anything else. The modem partition keeps the images
 # themselves in its own qca6390 folder, named with the fallback names the
 # driver also looks for, so every one is copied under both names for the
 # loader to find whichever it asks for. Once fs_ready is written, cnss2
-# powers the chip up and loads its firmware, and wlan0 appears. The MAC
-# address comes from where the phone itself keeps it, at the top of
-# persist.
+# powers the chip up, the driver registers its network devices, and wlan0
+# appears. The MAC address comes from where the phone itself keeps it, at
+# the top of persist.
 [wlan]
 modules = []
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]

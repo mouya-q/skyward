@@ -681,13 +681,62 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
         for w in &cfg.writes {
             fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
         }
+        // What the driver says as it comes up, heard while its interface is
+        // waited for, so a driver that names why it did not come up says it
+        // in the report of the failure itself.
+        let mut heard = KernelLog::new();
         let until = Instant::now() + INTERFACE_WAIT;
         while !net.exists() {
-            ensure!(Instant::now() < until, "the driver made no {} in {} seconds", cfg.interface, INTERFACE_WAIT.as_secs());
+            ensure!(Instant::now() < until, "the driver made no {} in {} seconds; the kernel said: {}", cfg.interface, INTERFACE_WAIT.as_secs(), heard.last());
             thread::sleep(Duration::from_millis(100));
+            heard.take();
         }
     }
     iface::set_up(&cfg.interface, true)
+}
+
+/// The kernel's own log, read while something is waited for: each line the
+/// driver writes is kept, the last few of them to say where the bring-up
+/// stopped.
+struct KernelLog {
+    read: Option<std::fs::File>,
+    lines: std::collections::VecDeque<String>,
+}
+
+impl KernelLog {
+    fn new() -> KernelLog {
+        KernelLog { read: std::fs::File::open("/dev/kmsg").ok(), lines: std::collections::VecDeque::new() }
+    }
+
+    /// Keep what the kernel has said since the last look, plain lines only.
+    fn take(&mut self) {
+        let Some(read) = &mut self.read else { return };
+        let mut buf = [0u8; 2048];
+        use std::io::Read;
+        while let Ok(n) = read.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            let text = &buf[..n];
+            if let Some(start) = text.iter().position(|&b| b == b';') {
+                let line = String::from_utf8_lossy(&text[start + 1..]).trim_end().to_string();
+                if !line.is_empty() {
+                    self.lines.push_back(line);
+                    if self.lines.len() > 8 {
+                        self.lines.pop_front();
+                    }
+                }
+            }
+        }
+    }
+
+    /// The last few lines the kernel said, joined to be said with why a
+    /// bring-up failed.
+    fn last(&mut self) -> String {
+        self.take();
+        let from = self.lines.len().saturating_sub(4);
+        self.lines.range(from..).cloned().collect::<Vec<_>>().join(" | ")
+    }
 }
 
 /// Put a file the driver asks for where the firmware loader looks.
