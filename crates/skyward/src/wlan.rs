@@ -705,7 +705,15 @@ struct KernelLog {
 
 impl KernelLog {
     fn new() -> KernelLog {
-        KernelLog { read: std::fs::File::open("/dev/kmsg").ok(), lines: std::collections::VecDeque::new() }
+        // The log is read without waiting: a read with nothing new to say
+        // comes back at once rather than holding the thread until the
+        // kernel says something.
+        let read = std::fs::File::open("/dev/kmsg").ok().map(|f| {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::fcntl(f.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+            f
+        });
+        KernelLog { read, lines: std::collections::VecDeque::new() }
     }
 
     /// Keep what the kernel has said since the last look, plain lines only.
@@ -713,17 +721,19 @@ impl KernelLog {
         let Some(read) = &mut self.read else { return };
         let mut buf = [0u8; 2048];
         use std::io::Read;
-        while let Ok(n) = read.read(&mut buf) {
-            if n == 0 {
-                break;
-            }
-            let text = &buf[..n];
-            if let Some(start) = text.iter().position(|&b| b == b';') {
-                let line = String::from_utf8_lossy(&text[start + 1..]).trim_end().to_string();
-                if !line.is_empty() {
-                    self.lines.push_back(line);
-                    if self.lines.len() > 8 {
-                        self.lines.pop_front();
+        loop {
+            match read.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let text = &buf[..n];
+                    if let Some(start) = text.iter().position(|&b| b == b';') {
+                        let line = String::from_utf8_lossy(&text[start + 1..]).trim_end().to_string();
+                        if !line.is_empty() {
+                            self.lines.push_back(line);
+                            if self.lines.len() > 8 {
+                                self.lines.pop_front();
+                            }
+                        }
                     }
                 }
             }
