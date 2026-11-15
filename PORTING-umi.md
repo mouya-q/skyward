@@ -246,4 +246,27 @@ Read this honestly; each line is a claim with its evidence.
   bring-up and, after a while, watchdog-reset the phone — the persist log
   of that run was lost with the crash (f2fs, no checkpoint), so the
   watchdog itself is read from the behaviour: the same image left alone
-  ran stable for minutes.
+  ran stable for minutes. What the log of `eca3804f` finally caught (the
+  `sync_all` on the persist log made it last the crash): the six erofs
+  partitions mounted at 3.7 s, and at 13.9 s `devices not brought up: the
+  service directory did not come back` — the previous build's fix to the
+  service descriptions made `ctl.restart servicemanager` reachable for the
+  first time, and `servicemanager` is one of init's `shutdown critical`
+  services: init read its death as the system's and rebooted to the
+  bootloader (`d7cddfe5` removed the restart, and the phone has been
+  stable since; the descriptions stay where the next start of
+  servicemanager reads them).
+- **Three more fixes from the `d7cddfe5` run's log** (`cf761f34`, flashed
+  as `b4b22331`): the WLAN firmware read died on `mount persist … Device
+  or resource busy` — the recovery itself mounts persist at boot, and the
+  kernel refuses a second mount of a block device it holds open, so a
+  firmware file off a partition the recovery has mounted is now read
+  where that partition already is; an image of `boot` was refused with
+  `NoPartition` — the partition links a no-slot phone carries carry no
+  `_a`/`_b` suffix, which the image placement now falls back to, and the
+  slot section of the flash page and the letters in its report are left
+  off where the phone has no slots; and the About page showed no system
+  version — a no-slot phone's properties are now read where its partitions
+  are mapped, and the version names the OS as its maker does:
+  `HyperOS4.0.29.0.XEOCNXM.D01`, the `D01` hotfix from `mi_ext`'s own
+  `build.prop`.
