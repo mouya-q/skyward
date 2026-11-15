@@ -320,15 +320,6 @@ pub fn registered_hardware(name: &str) -> bool {
     }
 }
 
-/// Whether the service directory takes calls. What it is asked about does
-/// not matter; that it answers does.
-pub fn reachable() -> bool {
-    match skyward_binder::driver::Binder::open() {
-        Ok(binder) => skyward_binder::service::find(&binder, "android.os.IServiceManager").is_ok(),
-        Err(_) => false,
-    }
-}
-
 /// A process already running `path`.
 pub fn running(path: &str) -> Option<u32> {
     fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
