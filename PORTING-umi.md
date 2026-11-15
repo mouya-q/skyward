@@ -24,7 +24,8 @@ device.
 | Slots | **none** (single boot, recovery, dtbo) | `ab = false`. Dual boot and boot-control work are not offered; the install page hides them on its own, as they key off `boot_a`/`boot_b`. |
 | Stock package | **fastboot tarball** | The phone's OTA is an sdat card package with no `payload.bin` and no `recovery.img`; the recovery partition only comes from a fastboot package, a `.tgz` of the partition images. Upstream read only OTA payloads (`.zip`). |
 | Touchscreen | **built into the kernel** | No module to load; `[modules] load` stays empty. |
-| WLAN | **`qca_cld3_qca6390`** (WCN3988) | One module, no dependencies. Its firmware and MAC address are symlinks in `/vendor/firmware/wlan/qca_cld/qca6390/`, pointing at `/mnt/vendor/persist/wlan/` — a folder the phone's own persist does not keep; the MAC is at the top of `persist` instead. |
+| WLAN | **built into the kernel** (`wlan` + `cnss2`) | The ported system's kernel carries the driver built in, so no module is loaded. The driver asks the firmware loader for the chip's images by **plain names** (`amss.bin`, `bdwlan.bin`, `regdb.bin`, the cfg and the MAC); the modem partition carries them in `image/qca6390/` under the fallback names (`amss20.bin`, `bdwlan.elf`, …), and the kernel looks for all of them under `/lib/firmware` first. |
+| Super partitions | **erofs** | The ported system's `super` holds every logical partition as erofs, which the stock `OS1.0.3.0` kernel does not read (`EROFS` absent from its strings). The recovery is assembled onto the **boot partition's own kernel** — the one the phone runs every day — so erofs mounts; see *Assembling* below. |
 | Vibration motor | **AW8697** (`aw8697_haptic`, i2c-2 005a) | Its force-feedback bitmap (`120070000`) carries none of `FF_PERIODIC`/`FF_CUSTOM`, so Skyward's force-feedback click cannot drive it. `[haptics]` is left out; the recovery runs with no vibration. |
 | Secure services | **HIDL** `keymaster@4.x`, `gatekeeper@1.0` | Skyward's crypto stack speaks the AIDL `IKeyMintDevice` of Android 13+. This phone's firmware registers no KeyMint AIDL service, so decrypting the data partition from the recovery is **not available** on this port. |
 | Display | **1080x2340 @440**, `j2_mp_42_02_0b_dsc_cmd` | The KMS path reads the connector's mode and topology itself; no per-model display code was needed. |
@@ -120,6 +121,33 @@ check still proves the base is the maker's own bytes.
 The artifact is `skyward-<ref>-umi-OS1.0.3.0.TJBCNXM.zip`, holding one file,
 `skyward-<ref>-umi-OS1.0.3.0.TJBCNXM.img`, exactly 128 MiB.
 
+## Assembling onto the phone's own kernel
+
+The image the CI builds carries the **stock kernel of `OS1.0.3.0`**, which
+reads no erofs — and the ported system's `super` holds every logical
+partition as erofs, so nothing mounts. The image is therefore assembled
+again on the phone, onto the **`boot` partition's own kernel, DTB and its
+recovery DTBO** — the three parts the phone's own recovery (TWRP, before
+this port replaced it) starts from, proven to start on this bootloader:
+
+- the kernel, DTB and recovery DTBO come from the running `boot` and the
+  TWRP backup (the DTB and DTBO are a matched pair; a stock DTB with a
+  ported DTBO laid over it is a mismatch the bootloader refuses, which
+  reads as a dead boot straight into fastboot);
+- the ramdisk is the built image's own, untouched — every fix below rides
+  along;
+- the AVB footer is rebuilt for the assembled image, as `skyward-pack`
+  builds it, and laid **at the end of the partition** — the bootloader
+  reads it there, and gives up on the whole slot when it finds anything
+  but a vbmeta image where it points. An assembled image whose footer sat
+  next to the vbmeta (twice built, twice) put the phone in fastboot on
+  every key, and the running system with it.
+
+The assembler is `swap_kernel.py` (kept beside this document in the
+working tree, not the repository); the assembled image is checked entry by
+entry (header fields, section magics, footer, vbmeta hash) before it is
+written.
+
 ## Installing and recovering
 
 The image fills the `recovery` partition. **On this phone `recovery` is not a
@@ -175,12 +203,14 @@ Read this honestly; each line is a claim with its evidence.
     (14,055,186 bytes) and the DTB (1,613,904 bytes) are the stock bytes;
   - the AVB footer names the image size and points at the vbmeta image the
     packer wrote (`AVB0`, unsigned, as an unlocked bootloader wants).
-- **Compiled** — the CI runs on commits `85934802`, `94065d1a`/`a935fe91` and
-  `07942dde` built the tools and this device's recovery; `Lint and test` and
-  `Build the recovery service and the packer` passed, and `Recovery for umi`
-  produced the image above. NOT RUN locally: no Rust toolchain on the phone
-  (`rustup-init` cannot spawn threads under this proot).
-- **Flashed** — three builds have been written to the `recovery` partition
+- **Compiled** — the CI runs on commits `85934802`, `94065d1a`/`a935fe91`,
+  `07942dde`, `bda503a3`, `22fe18e7`, `5509fb4e`, `c07d4923`, `6a7930e2`,
+  `1f3ab52e` and `677b167e` built the tools and this device's recovery;
+  `Lint and test` and `Build the recovery service and the packer` passed, and
+  `Recovery for umi` produced the image above. NOT RUN locally: no Rust
+  toolchain on the phone (`rustup-init` cannot spawn threads under this
+  proot).
+- **Flashed** — six builds have been written to the `recovery` partition
   with `dd`, each read back and checked byte for byte (write 134,217,728
   bytes; read-back SHA-256 equal). The stock TWRP the phone carried was
   backed up first, to
@@ -188,17 +218,32 @@ Read this honestly; each line is a claim with its evidence.
   SHA-256 `f4d4d5a705246fea2faceab88bd97897ab38383c6b6c1b127bd749dc2449e673`,
   verified: header v2, gzip ramdisk, 3674 entries, `twres`/`sbin` intact),
   and the maker's own `recovery.img` from the fastboot package stays on the
-  computer as the rollback of record.
-- **Booted** — parts verified, whole not yet. The first build (`8593480`)
-  came up as far as `skyward: umi 0.2.0 recovery up … asking for Menu` and
-  then failed `not an A/B device` (found in `/sys/fs/pstore/console-ramoops-0`
-  after the boot); the panel and the backlight came up (`set backlight from
-  0 to 200`), the screen stayed dark. The second build (`a935fe9`) got
-  past that (the log shows `no slot: this phone keeps its system in whole
-  partitions`), only to fail at the panel's normal-maximum backlight
-  property: the DTB of `OS1.0.3.0` (early 2024) carries none of the `mi,*`
-  pairs the UI looks for, and the recovery looped failing every five seconds.
-  The third build (`07942dd`) carries the fix for that; **what it shows on
-  the screen has not been reported yet**.
-- **Runtime / Hardware verified** — NOT RUN. Mounting, wiping, installing,
-  MTP and the WLAN bring-up have not been tried from the recovery yet.
+  computer as the rollback of record. The TWRP backup has saved the phone
+  twice, after two assembled images whose footers were laid wrong put it in
+  fastboot on every boot — flashing the TWRP back brought the system up
+  again both times.
+- **Booted and running** — the UI comes up, the panel lights, the touch
+  works and the Menu page answers. Getting there took three fixes, each
+  found from the kernel log of a failed boot: `booted_slot()` no longer
+  fails a phone with no slots (`85934802`'s log: `not an A/B device`); a
+  panel with no normal-maximum brightness property no longer fails the UI
+  (`a935fe9`'s log: the recovery looped failing every five seconds); and
+  the assembled images now carry the footer at the partition's end
+  (`c07d-erofs`'s fastboot-on-every-key: the bootloader gave up on the
+  whole slot over a footer it could not read).
+- **Mounting verified on hardware** — the run of `22fe18e7`-assembled
+  (`32cba218`) mounted every logical partition from `super` (the
+  `/mnt/vendor/persist/skyward.log` it left behind reads: `mounted
+  mi_ext/odm/product/system/system_ext/vendor … (erofs)`, all six), checked
+  the data partition (f2fs, fsck exit 0) and mounted it in the clear. That
+  is the whole-partition mount path working end to end on the phone.
+- **Runtime / Hardware verified** — partially. Mounting is verified above;
+  wiping, installing and MTP have not been tried yet. The WLAN bring-up
+  (`677b167e`-assembled, `4396beaf`) carries the firmware the loader asks
+  for (`amss.bin`, `bdwlan.bin`, `regdb.bin` under `/lib/firmware`, from
+  the modem partition's own images); **its first run has not been reported
+  yet**. Two earlier runs without the firmware (`32cba218`) failed the
+  bring-up and, after a while, watchdog-reset the phone — the persist log
+  of that run was lost with the crash (f2fs, no checkpoint), so the
+  watchdog itself is read from the behaviour: the same image left alone
+  ran stable for minutes.
