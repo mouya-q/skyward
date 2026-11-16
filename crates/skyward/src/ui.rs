@@ -1143,12 +1143,8 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
         && first != Screen::Unhandled
         && matches!(skyward_crypto::data::is_clear(), Ok(true))
     {
-        for fx in app.open_data() {
-            if let Effect::OpenData = fx {
-                ensure!(decryptor.is_none(), "the data partition is being opened already");
-                decryptor = Some(Decryptor::start(decrypt::Job::Open)?);
-            }
-        }
+        app.data_opening();
+        decryptor = Some(Decryptor::start(decrypt::Job::Open)?);
     }
     // The mount page shows the partitions as they are when it opens and
     // after each change; why they cannot be read is the page's to say.

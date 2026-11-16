@@ -3276,6 +3276,14 @@ impl App {
         self.dirty = true;
     }
 
+    /// The data partition is being opened as far as it opens with nothing
+    /// a user knows, on the pages starting rather than the decrypt page's
+    /// control, so that no page that needs what it holds waits for it.
+    pub fn data_opening(&mut self) {
+        self.state.data = Data::Opening;
+        self.refresh();
+    }
+
     /// The data partition is open: every user's own files with it, or
     /// those of `waiting`, the user and the control their screen lock is
     /// answered with, still closed.
