@@ -14,7 +14,7 @@ use crate::motion::{self, Spring};
 use crate::pages::{self, Band, Ctx};
 use crate::sprite::{Blurs, Sprite};
 use crate::search;
-use crate::settings::Settings;
+use crate::settings::{Settings, digest as keep_digest, salt as new_salt};
 use crate::term::{self, Term, TermKey};
 use crate::theme::Theme;
 use crate::tr;
@@ -5702,8 +5702,8 @@ impl App {
                     }
                     PassField::Again => {
                         if p.again == p.first && !p.first.is_empty() {
-                            let salt = settings::salt();
-                            let kept = format!("{salt}:{}", settings::digest(&p.first, &salt));
+                            let salt = new_salt();
+                            let kept = format!("{salt}:{}", keep_digest(&p.first, &salt));
                             self.state.pass_kept = Some(kept);
                             self.leave(true);
                             self.refresh();
@@ -5719,7 +5719,7 @@ impl App {
                 let given = std::mem::take(&mut self.state.password);
                 let kept = self.state.pass_kept.as_deref().unwrap_or_default();
                 let (salt, digest) = kept.split_once(':').unwrap_or((kept, ""));
-                if !digest.is_empty() && settings::digest(&given, salt) == digest {
+                if !digest.is_empty() && keep_digest(&given, salt) == digest {
                     let what = self.state.pass_gate.take();
                     let fx = what.map(|which| self.confirmed(which, now)).unwrap_or_default();
                     return fx;

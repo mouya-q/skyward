@@ -1,7 +1,8 @@
 use crate::app::{
     Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
-    FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, Pick, Place, Rows, Screen,
-    SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target, UsbDrive, UsbLink, Wipe, ADDABLE,
+    FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, PassField, Pick, Place,
+    Rows, Screen, SettingPass, SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target,
+    UsbDrive, UsbLink, Wipe, ADDABLE,
     BACKUP_PARTS, DATA_ERASED, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, USB_DRIVE_UNREADABLE,
     USB_DRIVE_WANTED, WIPES, installs, starting,
 };
@@ -3194,7 +3195,7 @@ pub fn security(cx: &Ctx) -> Frame {
         Row::new(l.pick(["清除密码", "清除密碼", "Put the password away"])).icon(RED, Icon::Lock),
     ]);
     out.extend(hits(&pass.rows, &[Action::SetPassword, Action::ClearPassword]));
-    y = pass.bottom + t.m.gap * 2.0;
+    y = pass.bottom + t.m.card_gap * 2.0;
     y = widgets::section(&mut c, t, f, y, l.pick(["验证", "驗證", "Asking"]));
     let ask = widgets::list(&mut c, t, f, y, &[
         Row::new(l.pick(["执行操作前使用密码验证", "執行操作前使用密碼驗證", "Ask for the password before the work goes on"]))
@@ -3202,7 +3203,7 @@ pub fn security(cx: &Ctx) -> Frame {
             .trail(Trail::Switch(s.verify_work)),
     ]);
     out.extend(hits(&ask.rows, &[Action::Toggle(Switch::VerifyWork)]));
-    y = ask.bottom + t.m.gap * 2.0;
+    y = ask.bottom + t.m.card_gap * 2.0;
     // A finger kept for unlocking the pages, once the reader is let in:
     // named here for the unlock it comes to, taken up apart from that.
     y = widgets::section(&mut c, t, f, y, l.pick(["指纹", "指紋", "Fingerprint"]));
