@@ -1,7 +1,7 @@
 use crate::app::{
     Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
     FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, PassField, Pick, Place,
-    Rows, Screen, SettingPass, SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target,
+    Rows, Screen, SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target,
     UsbDrive, UsbLink, Wipe, ADDABLE,
     BACKUP_PARTS, DATA_ERASED, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, USB_DRIVE_UNREADABLE,
     USB_DRIVE_WANTED, WIPES, installs, starting,
@@ -3191,7 +3191,7 @@ pub fn security(cx: &Ctx) -> Frame {
     };
     y = widgets::section(&mut c, t, f, y, l.pick(["密码", "密碼", "Password"]));
     let pass = widgets::list(&mut c, t, f, y, &[
-        Row::new(set).icon(BLUE, Icon::Lock).trail(Trail::Value(match &s.pass_kept { None => l.pick(["未设置", "未設定", "None"]).into(), Some(_) => l.pick(["已设置", "已設定", "Set"]).into() })),
+        Row::new(set).icon(BLUE, Icon::Lock).trail(Trail::Value(match &s.pass_kept { None => l.pick(["未设置", "未設定", "None"]), Some(_) => l.pick(["已设置", "已設定", "Set"]) })),
         Row::new(l.pick(["清除密码", "清除密碼", "Put the password away"])).icon(RED, Icon::Lock),
     ]);
     out.extend(hits(&pass.rows, &[Action::SetPassword, Action::ClearPassword]));
@@ -3210,7 +3210,7 @@ pub fn security(cx: &Ctx) -> Frame {
     let finger = widgets::list(&mut c, t, f, y, &[
         Row::new(l.pick(["指纹解锁", "指紋解鎖", "Unlock with a finger"]))
             .icon(PURPLE, Icon::Shield)
-            .trail(Trail::Value(match &s.finger { None => l.pick(["暂不可用", "暫不可用", "Not yet"]).into(), Some(_) => l.pick(["已录入", "已錄入", "Enrolled"]).into() })),
+            .trail(Trail::Value(match &s.finger { None => l.pick(["暂不可用", "暫不可用", "Not yet"]), Some(_) => l.pick(["已录入", "已錄入", "Enrolled"]) })),
     ]);
     out.extend(hits(&finger.rows, &[Action::FingerNotice]));
     Frame::new(t, c, out, l.pick(SECURITY_TITLE), t.m.dp(16.0))

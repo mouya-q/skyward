@@ -63,7 +63,7 @@ pub struct Settings {
     pub logs: Logs,
 }
 /// The pages' password and how it is asked for.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Security {
     /// The password stands before the work: it is asked for before the
@@ -78,11 +78,6 @@ pub struct Security {
     /// while the reader is not let in: kept for the unlock it comes to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finger: Option<String>,
-}
-impl Default for Security {
-    fn default() -> Self {
-        Security { verify: false, code: None, finger: None }
-    }
 }
 /// What `code` digests to, salted as it is: a plain folding of its bytes
 /// and its salt's, kept only to tell the password it came from. The pages
@@ -279,7 +274,7 @@ fn picked<const N: usize>(kept: &[String], all: &[&str; N]) -> [bool; N] {
 /// What the settings file held as the recovery started.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kept {
-    Settings(Settings),
+    Settings(Box<Settings>),
     /// No settings: no file, or one that does not read as settings.
     Nothing,
     /// Where the file is could not be read; it is left alone this time.
@@ -441,7 +436,7 @@ mod tests {
 
     #[test]
     fn changed_settings_are_written_once_they_have_stood_for_a_moment() {
-        let mut keeper = Keeper::new(&Kept::Settings(Settings::default()));
+        let mut keeper = Keeper::new(&Kept::Settings(Box::new(Settings::default())));
         assert_eq!(keeper.due(Settings::default(), 0), None, "what the file holds is not written again");
         let dark = Settings { dark: true, ..Settings::default() };
         assert_eq!(keeper.due(dark.clone(), 1_000), None);
