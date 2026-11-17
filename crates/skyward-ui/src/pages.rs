@@ -3213,8 +3213,7 @@ pub fn security(cx: &Ctx) -> Frame {
             .trail(Trail::Value(match &s.finger { None => l.pick(["暂不可用", "暫不可用", "Not yet"]).into(), Some(_) => l.pick(["已录入", "已錄入", "Enrolled"]).into() })),
     ]);
     out.extend(hits(&finger.rows, &[Action::FingerNotice]));
-    let end = finger.bottom;
-    Frame { canvas: c, hits: out, bg: t.pal.bg, ..Frame::new(t, c, Vec::new(), l.pick(SECURITY_TITLE), t.m.dp(16.0)) }
+    Frame::new(t, c, out, l.pick(SECURITY_TITLE), t.m.dp(16.0))
 }
 
 /// The password being set, typed twice over the keyboard: once to set it
