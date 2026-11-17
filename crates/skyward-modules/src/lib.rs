@@ -140,12 +140,14 @@ fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
 fn finit_module(file: &fs::File, params: &str) -> std::io::Result<()> {
     use std::os::unix::io::AsRawFd;
     let params = std::ffi::CString::new(params).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-    // The version magic is not checked, as the phone's own modprobe loads
-    // the modules its own init names: the maker builds them against the
-    // release its stock kernel runs, and a kernel of the same source under
-    // another name refuses them otherwise, though the module itself fits.
+    // The version magic and the versions of the kernel's own symbols are
+    // not checked, as the phone's own modprobe loads the modules its own
+    // init names: the maker builds them against the release its stock
+    // kernel runs, and a kernel of the same source under another name
+    // refuses them otherwise, though the module itself fits.
     const IGNORE_VERMAGIC: libc::c_int = 0x2;
-    let rc = unsafe { libc::syscall(libc::SYS_finit_module, file.as_raw_fd(), params.as_ptr(), IGNORE_VERMAGIC) };
+    const IGNORE_MODVERSIONS: libc::c_int = 0x4;
+    let rc = unsafe { libc::syscall(libc::SYS_finit_module, file.as_raw_fd(), params.as_ptr(), IGNORE_VERMAGIC | IGNORE_MODVERSIONS) };
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }

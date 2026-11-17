@@ -100,6 +100,17 @@ pub enum Screen {
     FontLicense,
     /// Which slot the phone starts from next.
     Slot,
+    /// Choosing the picture the pages sit on, from the internal storage.
+    Wallpaper,
+    /// The pages' password and how it is asked for: setting one, having it
+    /// asked for before the work goes on, and a finger kept for unlocking.
+    Security,
+    /// Setting the password: typing it twice, once to set it and once to
+    /// confirm it, on the keyboard, from the security page.
+    SetPass,
+    /// The work asks for the password before it goes on: typing it on the
+    /// keyboard lets it go on.
+    PassGate,
     /// The installed system and the one Skyward installed beside it: which
     /// of them starts, switching between them, and taking the other away.
     Systems,
@@ -287,6 +298,24 @@ pub struct Adding {
 pub enum Field {
     Name,
     Password,
+}
+/// The password being set: what is typed the first time and what is typed
+/// again to confirm it, with what the keyboard types into.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SettingPass {
+    /// The password typed the first time, waiting to be typed again.
+    pub first: String,
+    /// The password typed again, empty while it waits.
+    pub again: String,
+    /// What the keyboard types into: the first password, or the second.
+    pub field: PassField,
+}
+/// Which of the password being set the keyboard types into.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PassField {
+    #[default]
+    First,
+    Again,
 }
 
 /// How a network added by hand can be protected, in the order the stock
@@ -546,6 +575,8 @@ pub enum Switch {
     Vibrate,
     /// Offer internal storage to a computer over USB.
     FileTransfer,
+    /// The work asks for the password before it goes on.
+    VerifyWork,
     /// Compress a backup.
     Compress,
     /// Read a backup back once it is written.
@@ -1243,6 +1274,24 @@ pub enum Action {
     /// Open the entry at this place in a place's folder: a folder to look
     /// in, or the file to install.
     ChooseEntry(usize),
+    /// Choosing the picture the pages sit on in the folder shown.
+    WallpaperEntry(usize),
+    /// Putting the picture the pages sit on away, back on their own colour.
+    ClearWallpaper,
+    /// Setting the password the work asks for, or changing it.
+    SetPassword,
+    /// Putting the password away: the work goes on without asking.
+    ClearPassword,
+    /// The finger kept for unlocking the pages: taken up once the reader
+    /// is let in.
+    FingerNotice,
+    /// Typing into the password the security page sets, or what is typed
+    /// again to confirm it.
+    TypePass(PassField),
+    /// The password the set-pass page asked for stands typed.
+    PassEntered,
+    /// The password the work asked for stands typed, and it goes on.
+    PassGiven,
     /// Go up to the folder this many levels below the top of the list
     /// shown, by its place in the path shown over the list.
     OpenAncestor(usize),
@@ -1594,6 +1643,22 @@ pub struct State {
     pub vibration: f32,
     /// A computer connected over USB is offered internal storage.
     pub file_transfer: bool,
+    /// The background the pages sit on: the path of a PNG in the internal
+    /// storage, none while the pages sit on their own colour.
+    pub wallpaper: Option<String>,
+    /// The work asks for the password before it goes on.
+    pub verify_work: bool,
+    /// What was kept of the password set: `salt` and the password's digest
+    /// over it, after a `:`; none while no password is set.
+    pub pass_kept: Option<String>,
+    /// A finger kept for unlocking the pages, once the reader is let in:
+    /// none while it is not. Kept for the unlock it comes to.
+    pub finger: Option<String>,
+    /// The password being set on the set-pass page, once it is opened.
+    pub setting_pass: Option<SettingPass>,
+    /// What the work asked the password for, waiting for it to go on once
+    /// it is given: a control waiting for its slide to its end.
+    pub pass_gate: Option<Confirm>,
     pub reboot: usize,
     /// What the wipe page has chosen, by place in [`WIPES`].
     pub wipe: [bool; WIPES.len()],
@@ -1765,6 +1830,12 @@ impl Default for State {
             vibrate: true,
             vibration: SLIDER_START,
             file_transfer: true,
+            wallpaper: None,
+            verify_work: false,
+            pass_kept: None,
+            finger: None,
+            setting_pass: None,
+            pass_gate: None,
             reboot: 0,
             wipe: [false; WIPES.len()],
             cache_partition: false,
@@ -1853,7 +1924,7 @@ impl State {
     pub fn folder(&self, screen: Screen) -> &Folder {
         match screen {
             Screen::Files => &self.files,
-            Screen::Choose(Place::Storage) => &self.storage,
+            Screen::Choose(Place::Storage) | Screen::Wallpaper => &self.storage,
             Screen::Choose(Place::UsbDrive) => &self.drive,
             other => unreachable!("{other:?} lists no folder"),
         }
@@ -1862,7 +1933,7 @@ impl State {
     fn folder_mut(&mut self, screen: Screen) -> &mut Folder {
         match screen {
             Screen::Files => &mut self.files,
-            Screen::Choose(Place::Storage) => &mut self.storage,
+            Screen::Choose(Place::Storage) | Screen::Wallpaper => &mut self.storage,
             Screen::Choose(Place::UsbDrive) => &mut self.drive,
             other => unreachable!("{other:?} lists no folder"),
         }
@@ -2642,6 +2713,10 @@ pub struct App {
     unsaved_warned: Option<u64>,
     /// The About page field's dither, made for the screen once.
     dither: Option<glow::Dither>,
+    /// The background the pages sit on, read from the path the settings
+    /// name, for the screen's shape: none while they sit on their own
+    /// colour, or where the picture it names cannot be read.
+    wallpaper: Option<Canvas>,
     toast: Option<(String, u64)>,
     drag: Drag,
     tracker: Tracker,
@@ -2755,6 +2830,7 @@ impl App {
             shell_folder: "/".into(),
             unsaved_warned: None,
             dither: None,
+            wallpaper: None,
             toast: None,
             drag: Drag::Idle,
             tracker: Tracker::default(),
@@ -3275,13 +3351,32 @@ impl App {
         self.layer = None;
         self.dirty = true;
     }
-
     /// The data partition is being opened as far as it opens with nothing
     /// a user knows, on the pages starting rather than the decrypt page's
     /// control, so that no page that needs what it holds waits for it.
     pub fn data_opening(&mut self) {
         self.state.data = Data::Opening;
         self.refresh();
+    }
+
+    /// The background the pages sit on, as the settings were kept: the
+    /// picture `path` names is read and cropped for the screen, none while
+    /// the settings name none. A picture that cannot be read is said on the
+    /// screen and the pages sit on their own colour.
+    pub fn wallpaper(&mut self, path: Option<&str>) {
+        self.wallpaper = path.and_then(|p| {
+            let held = std::fs::read(p).ok()?;
+            Canvas::from_png(&held, self.w, self.h).ok()
+        });
+        if path.is_some() && self.wallpaper.is_none() {
+            self.say(crate::lang::Lang::Hans.pick(["无法读取背景图片", "無法讀取背景圖片", "Couldn't read the background picture"]), 0);
+        }
+        self.refresh();
+    }
+
+    /// Whether the pages sit on a background picture of their own.
+    pub fn has_wallpaper(&self) -> bool {
+        self.wallpaper.is_some()
     }
 
     /// The data partition is open: every user's own files with it, or
@@ -3293,6 +3388,14 @@ impl App {
             None => Data::Open,
         };
         self.state.code.clear();
+        // The pages sit on the picture the settings name, read and cropped
+        // for the screen once the data holds it; where it cannot be read,
+        // they sit on their own colour.
+        if self.state.data == Data::Open && self.wallpaper.is_none() {
+            if let Some(path) = self.state.wallpaper.clone() {
+                self.wallpaper(Some(&path));
+            }
+        }
         self.refresh();
     }
 
@@ -4106,7 +4209,7 @@ impl App {
             let screen = self.screen();
             for rows in std::mem::take(&mut self.stale) {
                 let band = Band { rows, cols: (0, self.cols) };
-                let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band) };
+                let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band), wallpaper: self.wallpaper.as_ref() };
                 let fresh = pages::render(screen, &cx);
                 let mut canvas = self.frame.take().expect("checked above").canvas;
                 assert_eq!(canvas.h, fresh.canvas.h, "a page drawn again in part is as tall as it was");
@@ -4119,7 +4222,7 @@ impl App {
             let screen = self.screen();
             let first = self.top().1.max(0.0) as u32;
             let band = Band { rows: (first, first + self.h), cols: (0, wide.min(self.w)) };
-            let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band) };
+            let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band), wallpaper: self.wallpaper.as_ref() };
             let mut frame = pages::render(screen, &cx);
             // A page drawn in part across holds its rows whole, the columns
             // of them drawn on as they are needed.
@@ -4180,7 +4283,7 @@ impl App {
         let held = frame.canvas.held();
         let t = self.theme();
         let band = Band { rows: (held.start, held.end), cols: (self.cols, wide) };
-        let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band) };
+        let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band), wallpaper: self.wallpaper.as_ref() };
         let part = pages::render(self.screen(), &cx).canvas;
         self.frame.as_mut().expect("drawn above").canvas.replace(&part);
         self.cols = wide;
@@ -4211,7 +4314,7 @@ impl App {
         let screen = self.screen();
         for rows in bands {
             let band = Band { rows, cols: (0, self.w) };
-            let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band) };
+            let cx = Ctx { t: &t, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band), wallpaper: self.wallpaper.as_ref() };
             let part = pages::render(screen, &cx).canvas;
             self.frame.as_mut().expect("drawn above").canvas.join(&part);
         }
@@ -4337,7 +4440,7 @@ impl App {
             let (x, y, w, h) = row_part(press.rect, page);
             let pressed = t.pressed();
             let band = Band { rows: (y, y + h), cols: (x, x + w) };
-            let cx = Ctx { t: &pressed, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band) };
+            let cx = Ctx { t: &pressed, f, info, state: &self.state, term: self.term.as_ref(), band: Some(band), wallpaper: self.wallpaper.as_ref() };
             let down = pages::render(screen, &cx).canvas;
             assert_eq!((down.w, down.h), (page.w, page.h), "a page held down is laid out as it was");
             self.row_art = Some((page.crop(x, y, w, h), down.crop(x, y, w, h)));
@@ -4421,6 +4524,13 @@ impl App {
             }
         };
         let frame = self.frame.as_ref().expect("a page is drawn from its frame");
+        // The pages sit on the wallpaper the settings name, wherever the
+        // page itself is its own colour: the page is laid over the picture
+        // as it is over that colour, its own colour left out so the
+        // picture shows through.
+        if let Some(wallpaper) = &self.wallpaper {
+            out.put_rows(wallpaper, 0, out.h as i32, 0);
+        }
         let (_, big, small) = self.titles.as_mut().expect("a page's titles are drawn with it");
         // The row a finger holds darkens as part of the page, under what is
         // laid over the page.
@@ -4461,10 +4571,12 @@ impl App {
                 let from = offset as i32 + first as i32;
                 out.put_rows(&frame.canvas, from, from + (last - first) as i32, first as i32);
             }
-            out.fill_rect(0.0, 0.0, out.w as f32, first as f32, frame.bg);
-            out.fill_rect(0.0, last as f32, out.w as f32, list_top - last as f32, frame.bg);
-            let below = list_end.max(last as f32);
-            out.fill_rect(0.0, below, out.w as f32, h - below, frame.bg);
+            if self.wallpaper.is_none() {
+                out.fill_rect(0.0, 0.0, out.w as f32, first as f32, frame.bg);
+                out.fill_rect(0.0, last as f32, out.w as f32, list_top - last as f32, frame.bg);
+                let below = list_end.max(last as f32);
+                out.fill_rect(0.0, below, out.w as f32, h - below, frame.bg);
+            }
             if let Some(rows) = &frame.rows {
                 // A long list's rows on screen, each drawn when it first
                 // shows. Those more than half a screen away are let go, and
@@ -4479,7 +4591,7 @@ impl App {
                             let (f, info) = fresh.expect("a page drawn again as it last showed has its rows in view drawn");
                             let mut c = self.spare.pop().unwrap_or_else(|| Canvas::new(out.w, 0));
                             c.resize((rows.edges[i + 1] - rows.edges[i]) as u32);
-                            let cx = Ctx { t, f, info, state: &self.state, term: self.term.as_ref(), band: None };
+                            let cx = Ctx { t, f, info, state: &self.state, term: self.term.as_ref(), band: None, wallpaper: self.wallpaper.as_ref() };
                             pages::row(screen, &cx, i, &mut c);
                             self.drawn.push((i, c));
                             self.drawn.len() - 1
@@ -4617,7 +4729,11 @@ impl App {
             self.draw_rows(f, info, morph.scroll - rise, morph.scroll - rise + m.h as f32);
         }
         let frame = self.frame.as_ref().expect("rendered above");
-        out.fill_rect(0.0, 0.0, out.w as f32, out.h as f32, frame.bg);
+        if let Some(wallpaper) = &self.wallpaper {
+            out.put_rows(wallpaper, 0, out.h as i32, 0);
+        } else {
+            out.fill_rect(0.0, 0.0, out.w as f32, out.h as f32, frame.bg);
+        }
         if morph.into {
             // The search page's keyboard and what it shows under its
             // field, from its frame; that comes in once the bar is nearly
@@ -5075,6 +5191,7 @@ impl App {
             Screen::Systems => vec![Effect::ReadSystems],
             Screen::Restore => vec![self.find_backups()],
             Screen::Files => vec![Effect::ReadDir(self.state.files.path.clone())],
+            Screen::Wallpaper => vec![Effect::ReadPlace(Place::Storage, self.state.folder(s).path.clone())],
             Screen::Choose(place) if self.state.place_open(place) => vec![Effect::ReadPlace(place, self.state.folder(s).path.clone())],
             Screen::Search => {
                 self.state.search.clear();
@@ -5175,6 +5292,15 @@ impl App {
                 let on = match switch {
                     Switch::Vibrate => &mut self.state.vibrate,
                     Switch::FileTransfer => &mut self.state.file_transfer,
+                    Switch::VerifyWork => {
+                        // The work asks for the password only where one stands
+                        // before it.
+                        if self.state.pass_kept.is_none() {
+                            self.say(l.pick(["请先设置密码", "請先設定密碼", "Set a password first"]), now);
+                            return Vec::new();
+                        }
+                        &mut self.state.verify_work
+                    }
                     Switch::Compress => &mut self.state.compress,
                     Switch::Verify => &mut self.state.verify,
                     Switch::Signature => &mut self.state.check_signature,
@@ -5511,6 +5637,97 @@ impl App {
                     }];
                 }
             }
+            Action::WallpaperEntry(i) => {
+                let screen = self.screen();
+                let folder = self.state.folder(screen);
+                let entry = folder.entry(i).clone();
+                let path = folder.inside(&entry.name);
+                match entry.kind {
+                    FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => {
+                        let scroll = self.top().1;
+                        self.state.folder_mut(screen).leave(scroll);
+                        return vec![Effect::ReadPlace(Place::Storage, path)];
+                    }
+                    FileKind::File | FileKind::Link { folder: false, .. } => {
+                        let name = entry.name.to_lowercase();
+                        if name.ends_with(".png") {
+                            self.wallpaper(Some(&path));
+                            if self.has_wallpaper() {
+                                self.state.wallpaper = Some(path);
+                            }
+                            return Vec::new();
+                        }
+                        self.say(self.state.lang.pick(["请选择 PNG 图片", "請選擇 PNG 圖片", "Pick a PNG picture"]), 0);
+                    }
+                    FileKind::Special => unreachable!("a folder lists no special files"),
+                }
+            }
+            Action::ClearWallpaper => {
+                self.wallpaper(None);
+                self.state.wallpaper = None;
+                return Vec::new();
+            }
+            Action::SetPassword => {
+                self.state.setting_pass = Some(SettingPass::default());
+                self.state.layer = Layer::Letters;
+                self.open(Screen::SetPass);
+                return self.arrive_at(Screen::SetPass);
+            }
+            Action::ClearPassword => {
+                self.state.pass_kept = None;
+                self.state.verify_work = false;
+                self.refresh();
+            }
+            Action::FingerNotice => {
+                self.say(l.pick(["指纹解锁尚未开放，敬请期待", "指紋解鎖尚未開放，敬請期待", "Fingerprint unlock is coming"]), now);
+            }
+            Action::TypePass(field) => {
+                let p = self.state.setting_pass.as_mut().expect("the set-pass page sets the password");
+                if p.field != field {
+                    p.field = field;
+                    self.refresh();
+                }
+            }
+            Action::PassEntered => {
+                let Some(p) = self.state.setting_pass.take() else { unreachable!("the set-pass page sets the password") };
+                match p.field {
+                    PassField::First if !p.first.is_empty() => {
+                        // The first password stands; it is typed again.
+                        self.state.setting_pass = Some(SettingPass { first: p.first, again: String::new(), field: PassField::Again });
+                        self.refresh();
+                    }
+                    PassField::First => {
+                        self.state.setting_pass = Some(p);
+                        self.say(l.pick(["请输入密码", "請輸入密碼", "Type the password"]), now);
+                    }
+                    PassField::Again => {
+                        if p.again == p.first && !p.first.is_empty() {
+                            let salt = settings::salt();
+                            let kept = format!("{salt}:{}", settings::digest(&p.first, &salt));
+                            self.state.pass_kept = Some(kept);
+                            self.leave(true);
+                            self.refresh();
+                        } else {
+                            self.state.setting_pass = Some(SettingPass::default());
+                            self.refresh();
+                            self.say(l.pick(["两次输入不一致，请重新设置", "兩次輸入不一致，請重新設定", "The passwords differ; set it again"]), now);
+                        }
+                    }
+                }
+            }
+            Action::PassGiven => {
+                let given = std::mem::take(&mut self.state.password);
+                let kept = self.state.pass_kept.as_deref().unwrap_or_default();
+                let (salt, digest) = kept.split_once(':').unwrap_or((kept, ""));
+                if !digest.is_empty() && settings::digest(&given, salt) == digest {
+                    let what = self.state.pass_gate.take();
+                    let fx = what.map(|which| self.confirmed(which, now)).unwrap_or_default();
+                    return fx;
+                }
+                self.state.password.clear();
+                self.say(l.pick(["密码错误", "密碼錯誤", "Wrong password"]), now);
+                self.refresh();
+            }
             Action::JoinNetwork(i) => {
                 let w = self.state.wlan.as_ref().expect("networks show on a phone whose WLAN is brought up");
                 // A scan may have changed the list since the page was drawn.
@@ -5703,6 +5920,14 @@ impl App {
                     Field::Password => &mut self.state.password,
                 }
             }
+            Screen::SetPass => {
+                let p = self.state.setting_pass.as_mut().expect("the set-pass page sets the password");
+                match p.field {
+                    PassField::First => &mut p.first,
+                    PassField::Again => &mut p.again,
+                }
+            }
+            Screen::PassGate => &mut self.state.password,
             s => panic!("{s:?} has no text field"),
         }
     }
@@ -5884,6 +6109,8 @@ impl App {
                         return self.act(Action::Open(first.screen), now);
                     }
                 }
+                Screen::SetPass => return self.act(Action::PassEntered, now),
+                Screen::PassGate => return self.act(Action::PassGiven, now),
                 Screen::Decrypt if self.state.code.is_empty() => self.say(l.pick(["请输入锁屏密码", "請輸入螢幕鎖定密碼", "Enter the screen lock"]), now),
                 Screen::Decrypt => {
                     let code = std::mem::take(&mut self.state.code);
@@ -6446,6 +6673,17 @@ impl App {
 
     /// What a swipe-to-confirm control slid to its end does.
     fn confirmed(&mut self, which: Confirm, now: u64) -> Vec<Effect> {
+        // Where the work asks for the password before it goes on, the
+        // password stands between the control and what it does: the page
+        // of the password is put up in its place, the control waiting to
+        // go on once the password is given.
+        if self.state.verify_work && self.state.pass_kept.is_some() && self.screen() != Screen::PassGate {
+            self.state.pass_gate = Some(which);
+            self.state.password.clear();
+            self.state.layer = Layer::Letters;
+            self.open(Screen::PassGate);
+            return self.arrive_at(Screen::PassGate);
+        }
         let (l, mut fx) = (self.state.lang, Vec::new());
         match which {
             Confirm::Reboot => fx.push(Effect::Reboot(TARGETS[self.state.reboot])),
@@ -7119,7 +7357,7 @@ mod tests {
         ];
         for t in [Theme::light(W, H, PPD), Theme::dark(W, H, PPD).pressed()] {
             for screen in screens {
-                let cx = |band| Ctx { t: &t, f: &f, info: &i, state: &state, term: None, band };
+                let cx = |band| Ctx { t: &t, f: &f, info: &i, state: &state, term: None, band, wallpaper: None };
                 let whole = pages::render(screen, &cx(None)).canvas;
                 let row = whole.w as usize * 4;
                 let differs = |c: &Canvas| c.data.chunks(row).zip(whole.data.chunks(row)).position(|(a, b)| a != b);
@@ -7164,7 +7402,7 @@ mod tests {
             bands += 1;
         }
         let t = app.theme();
-        let whole = pages::render(Screen::Settings, &Ctx { t: &t, f: &f, info: &i, state: &app.state, term: None, band: None }).canvas;
+        let whole = pages::render(Screen::Settings, &Ctx { t: &t, f: &f, info: &i, state: &app.state, term: None, band: None, wallpaper: None }).canvas;
         let page = &app.frame.as_ref().unwrap().canvas;
         assert!(whole.h > H + H / 4, "a page well over a screen long, drawn in {bands} more bands");
         assert!(page.whole() && page.data == whole.data, "the page drawn a band at a time is the page drawn whole");
@@ -7178,7 +7416,7 @@ mod tests {
         app.compose(&mut out, &f, &i, "12:00", 0);
         let anew = |app: &App| {
             let t = app.theme();
-            pages::render(Screen::Search, &Ctx { t: &t, f: &f, info: &i, state: &app.state, term: None, band: None })
+            pages::render(Screen::Search, &Ctx { t: &t, f: &f, info: &i, state: &app.state, term: None, band: None, wallpaper: None })
         };
         for cap in [Cap::Char('b'), Cap::Char('f'), Cap::Space, Cap::Backspace, Cap::Shift, Cap::Char('q')] {
             let (x, y) = spot(&mut app, &f, &i, Action::Type(cap));
@@ -9647,7 +9885,7 @@ mod tests {
             let mut app = App::new(Screen::Home, W, H, PPD);
             (app.state.dual_boot, app.state.systems) = (true, Some(Ok(systems)));
             let t = app.theme();
-            let cx = Ctx { t: &t, f: &f, info: &i, state: &app.state, term: None, band: None };
+            let cx = Ctx { t: &t, f: &f, info: &i, state: &app.state, term: None, band: None, wallpaper: None };
             pages::render(Screen::Home, &cx).canvas.data.clone()
         };
         assert!(named(two_systems()) != named(Overview { other_starts: true, ..two_systems() }), "the home page names the one that starts");

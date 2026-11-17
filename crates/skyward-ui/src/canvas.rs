@@ -133,6 +133,39 @@ impl Canvas {
         self.held() == (0..self.h) && self.cols() == (0..self.w)
     }
 
+    /// A canvas `w` × `h` that holds the picture `png` bytes draw, cropped as
+    /// the phone's own wallpaper is: the picture's own middle filling the
+    /// canvas, whatever its shape, by the shorter side.
+    pub fn from_png(png: &[u8], w: u32, h: u32) -> anyhow::Result<Canvas> {
+        let mut read = png::Decoder::new(std::io::Cursor::new(png)).read_info().map_err(|e| anyhow::anyhow!("read the picture's header: {e}"))?;
+        let mut pixels = vec![0u8; read.output_buffer_size()];
+        let info = read.next_frame(&mut pixels).map_err(|e| anyhow::anyhow!("read the picture: {e}"))?;
+        if info.color_type != png::ColorType::Rgb {
+            anyhow::bail!("the picture is {:?}, not the plain colours a wallpaper is", info.color_type);
+        }
+        let (pw, ph) = (info.width, info.height);
+        if pw == 0 || ph == 0 {
+            anyhow::bail!("the picture holds nothing");
+        }
+        let mut out = Canvas::new(w, h);
+        // The middle of the picture, cropped to the canvas's shape: the
+        // share of the picture each canvas pixel takes, whole pixels kept
+        // in step so the crop does not drift.
+        let (sx, sy) = ((pw as f64 / w as f64).max(1.0), (ph as f64 / h as f64).max(1.0));
+        let (cw, ch) = ((w as f64 / pw as f64 * sx).floor() as u32, (h as f64 / ph as f64 * sy).floor() as u32);
+        let (ox, oy) = ((pw.saturating_sub(cw)) / 2, (ph.saturating_sub(ch)) / 2);
+        for y in 0..h {
+            let from = (oy + y * ch / h).min(ph.saturating_sub(1)) as usize;
+            for x in 0..w {
+                let at = ((ox + x * cw / w).min(pw.saturating_sub(1)) as usize * 3) + from * pw as usize * 3;
+                let to = out.at(x as i32, y as i32);
+                let (r, g, b) = (pixels[at], pixels[at + 1], pixels[at + 2]);
+                out.data[to..to + 4].copy_from_slice(&[r, g, b, 255]);
+            }
+        }
+        Ok(out)
+    }
+
     /// Write the canvas, which holds all of itself, as a PNG of what the
     /// panel shows of it: each pixel's color, without its alpha, which the
     /// panel does not show.
@@ -1337,4 +1370,3 @@ mod tests {
         assert_eq!(part.data.chunks(4).map(|p| p[0]).collect::<Vec<_>>(), [2, 3, 4]);
     }
 }
-

@@ -65,6 +65,8 @@ pub enum Icon {
     Battery,
     /// Two phones, the one behind showing round the one in front.
     Systems,
+    /// A picture in a frame, as the stock Settings' wallpaper shows it.
+    Image,
 }
 
 /// The stock icons' box: every outline here is laid out in it.
@@ -346,6 +348,19 @@ const SYSTEMS: &[Part] = &[
     cut(Shape::Line("M14.4,20.2H18", 1.3)),
 ];
 
+/// A picture in a frame: the frame itself, with a mountain and a sun
+/// inside it, as the stock Settings' wallpaper shows it.
+const IMAGE: &[Part] = &[
+    // The frame.
+    add(Shape::EvenOdd(
+        "M7.5,5.5H20.5A1.5,1.5 0 0 1 22,7V19A1.5,1.5 0 0 1 20.5,20.5H7.5A1.5,1.5 0 0 1 6,19V7A1.5,1.5 0 0 1 7.5,5.5Z\\\n     M7.5,6.8A0.2,0.2 0 0 0 7.3,7V19A0.2,0.2 0 0 0 7.5,19.2H20.5A0.2,0.2 0 0 0 20.7,19V7A0.2,0.2 0 0 0 20.5,6.8Z",
+    )),
+    // The mountain.
+    add(Shape::Fill("M9.5,16.9L12.2,13.4A1,1 0 0 1 13.8,13.3L16,15.1L18.4,12.2A1,1 0 0 1 19.9,12.4L22.5,15.9V18.2A0.9,0.9 0 0 1 21.6,19.1H8.1A0.9,0.9 0 0 1 7.2,18.2V16.6Z")),
+    // The sun.
+    add(Shape::Fill("M10.8,8.8A1.4,1.4 0 1 0 10.8,11.6A1.4,1.4 0 0 0 10.8,8.8Z")),
+];
+
 /// What `icon`'s glyph is drawn from, and at what share of its size.
 fn outline(icon: Icon) -> (&'static [Part], f32) {
     match icon {
@@ -371,6 +386,7 @@ fn outline(icon: Icon) -> (&'static [Part], f32) {
         Icon::Wlan => (WLAN, 1.0),
         Icon::Battery => (BATTERY, 1.0),
         Icon::Systems => (SYSTEMS, 1.0),
+        Icon::Image => (IMAGE, 1.0),
     }
 }
 

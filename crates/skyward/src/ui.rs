@@ -1116,6 +1116,11 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
     let named = locale.map(Lang::for_locale).transpose()?;
     app.take_settings(kept.settings(), named);
     let mut keeper = Keeper::new(&kept);
+    // The pages sit on the picture the settings name, read and cropped for
+    // the screen; where it cannot be read, they sit on their own colour.
+    if let Some(path) = app.state.wallpaper.clone() {
+        app.wallpaper(Some(&path));
+    }
     skyward_sys::kmsg(&format!(
         "the pages speak {:?}, {}, and the locale named is {}",
         app.state.lang,

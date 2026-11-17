@@ -48,10 +48,69 @@ pub struct Settings {
     /// The vibration slider's place, from 0 at its left end to 1.
     pub vibration: f32,
     /// A computer connected over USB is offered internal storage.
+    /// The background the pages sit on, on phones that have a picture of
+    /// one: the path of a PNG in the internal storage, none while the pages
+    /// sit on their own colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallpaper: Option<String>,
     pub file_transfer: bool,
+    /// The security of the pages: whether a password stands between the
+    /// user and the work the recovery does, what was kept of the password
+    /// they set, and whether the work asks for the password first.
+    pub security: Security,
     pub install: Install,
     pub backup: Backup,
     pub logs: Logs,
+}
+/// The pages' password and how it is asked for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Security {
+    /// The password stands before the work: it is asked for before the
+    /// work goes on.
+    pub verify: bool,
+    /// What was kept of the password set: a string the password digests
+    /// to, with the salt before it after a `:`; none while no password is
+    /// set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// The fingerprint the phone's keymaster holds for a finger, none
+    /// while the reader is not let in: kept for the unlock it comes to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finger: Option<String>,
+}
+impl Default for Security {
+    fn default() -> Self {
+        Security { verify: false, code: None, finger: None }
+    }
+}
+/// What `code` digests to, salted as it is: a plain folding of its bytes
+/// and its salt's, kept only to tell the password it came from. The pages
+/// carry no hashing library, so this holds what they can; a finger set
+/// aside, the password stands between a user who knows it and the work.
+pub fn digest(code: &str, salt: &str) -> String {
+    // FNV-1a's fold, over the salt then the code, run twice over.
+    let mut a = 0xcbf2_9ce4_8422_2325u64;
+    for round in 0..2 {
+        for byte in salt.bytes().chain(code.bytes()).chain(salt.bytes()) {
+            a ^= byte as u64;
+            a = a.wrapping_mul(0x1000_0000_01b3);
+        }
+        a ^= round as u64;
+        a = a.wrapping_mul(0x1000_0000_01b3);
+    }
+    format!("{a:016x}")
+}
+/// A new salt for keeping a password: the moment it was set, folded as the
+/// code is.
+pub fn salt() -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let mut a = 0xcbf2_9ce4_8422_2325u64;
+    for byte in format!("{}-{}", now.as_nanos(), now.as_secs()).bytes() {
+        a ^= byte as u64;
+        a = a.wrapping_mul(0x1000_0000_01b3);
+    }
+    format!("{a:016x}")
 }
 
 /// The install page's options.
@@ -126,6 +185,8 @@ impl Settings {
             vibrate: state.vibrate,
             vibration: state.vibration,
             file_transfer: state.file_transfer,
+            wallpaper: state.wallpaper.clone(),
+            security: Security { verify: state.verify_work, code: state.pass_kept.clone(), finger: state.finger.clone() },
             install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
             backup: Backup {
                 parts: names(&state.backup, &PARTS),
@@ -184,6 +245,10 @@ impl Settings {
             state.vibration = self.vibration;
         }
         state.file_transfer = self.file_transfer;
+        state.wallpaper = self.wallpaper.clone();
+        state.verify_work = self.security.verify;
+        state.pass_kept = self.security.code.clone();
+        state.finger = self.security.finger.clone();
         state.check_signature = self.install.check_signature;
         state.keep_recovery = self.install.keep_recovery;
         state.backup = picked(&self.backup.parts, &PARTS);
@@ -307,6 +372,7 @@ mod tests {
             time_zone: 7,
             vibrate: false,
             vibration: 0.4,
+            wallpaper: None,
             file_transfer: false,
             check_signature: true,
             keep_recovery: false,

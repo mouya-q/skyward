@@ -20,6 +20,12 @@ use std::sync::OnceLock;
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+/// The name of the file at the end of `path`, as the file manager shows
+/// it: the path itself where it names none.
+pub fn file_name_of(path: &str) -> &str {
+    path.rsplit_once('/').map(|(_, name)| name).unwrap_or(path)
+}
+
 /// Marketed RAM size: the smallest standard module size that holds `MemTotal`.
 pub fn ram(kib: u64) -> String {
     const SIZES: [f64; 16] = [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0, 18.0, 20.0, 24.0, 32.0, 48.0, 64.0];

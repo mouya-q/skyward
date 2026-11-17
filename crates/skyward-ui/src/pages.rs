@@ -50,6 +50,10 @@ pub struct Ctx<'a> {
     /// The part of the page to draw; all of it if none is given. The page
     /// is laid out whole either way.
     pub band: Option<Band>,
+    /// The background picture the pages sit on, once one is set: the pages
+    /// are left clear wherever they would be their own colour, so the
+    /// picture shows through from under them.
+    pub wallpaper: Option<&'a Canvas>,
 }
 
 /// Rows `rows` of a page, and of them the columns `cols`, each from the
@@ -68,6 +72,10 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::Reboot => reboot(cx),
         Screen::Wipe => wipe(cx),
         Screen::Mount => mount(cx),
+        Screen::Wallpaper => wallpaper(cx),
+        Screen::Security => security(cx),
+        Screen::SetPass => set_pass(cx),
+        Screen::PassGate => pass_gate(cx),
         Screen::Install => install(cx),
         Screen::Choose(place) => choose(cx, place),
         Screen::Installing => installing(cx),
@@ -175,11 +183,19 @@ const TIME_ZONE: Text = ["时区", "時區", "Time zone"];
 const LICENSE: Text = ["开源许可", "開放原始碼授權", "Open source licenses"];
 const FONTS: Text = ["界面字体", "介面字型", "UI fonts"];
 const DUAL_BOOT: Text = ["双系统", "雙系統", "Dual boot"];
+const WALLPAPER: Text = ["背景壁纸", "背景桌布", "Background picture"];
+const CLEAR_WALLPAPER: Text = ["清除背景壁纸", "清除背景桌布", "Put the picture away"];
+const SECURITY_TITLE: Text = ["密码与安全", "密碼與安全性", "Password & security"];
+const SET_PASS_TITLE: Text = ["设置密码", "設定密碼", "Set a password"];
+const PASS_GATE_TITLE: Text = ["验证密码", "驗證密碼", "Type the password"];
 
 /// A canvas for a page `h` tall in the colour `bg`, holding the rows `cx`
-/// asks to be drawn.
+/// asks to be drawn. Where the pages sit on a background picture of their
+/// own, the page is left clear wherever it would be `bg`, so the picture
+/// shows through from under the page.
 fn sheet(cx: &Ctx, h: u32, bg: Rgba) -> Canvas {
     let w = cx.t.m.w;
+    let bg = if cx.wallpaper.is_some() { Rgba { a: 0, ..bg } } else { bg };
     let Band { rows, cols } = cx.band.unwrap_or(Band { rows: (0, h), cols: (0, w) });
     Canvas::band(w, h, rows.0..rows.1, cols.0..cols.1, bg)
 }
@@ -371,11 +387,25 @@ pub fn settings(cx: &Ctx) -> Frame {
         out.push(Hit { rect: r, action: Action::Toggle(Switch::Vibrate) });
     }
     y = widgets::section(&mut c, t, f, vibration.bottom, l.pick(["通用", "一般", "General"]));
-    let general = widgets::list(&mut c, t, f, y, &[
+    let wall = s.wallpaper.as_deref().map(fmt::file_name_of).unwrap_or_else(|| l.pick(["未设置", "未設定", "None"]));
+    let mut general_rows = vec![
         Row::new(l.pick(LANGUAGE)).icon(BLUE, Icon::Globe).trail(Trail::Value(l.name())),
         Row::new(l.pick(TIME_ZONE)).icon(ORANGE, Icon::Clock).trail(Trail::Value(l.pick(TIME_ZONES[s.time_zone].0))),
-    ]);
-    out.extend(hits(&general.rows, &[Action::Open(Screen::Language), Action::Open(Screen::TimeZone)]));
+        Row::new(l.pick(WALLPAPER)).icon(GREEN, Icon::Image).trail(Trail::Value(wall)),
+        Row::new(l.pick(SECURITY_TITLE)).icon(RED, Icon::Shield).trail(Trail::Value(if s.pass_kept.is_some() { l.pick(["已开启", "已開啟", "On"]) } else { l.pick(["未设置", "未設定", "None"]) })),
+    ];
+    let mut general_acts = vec![
+        Action::Open(Screen::Language),
+        Action::Open(Screen::TimeZone),
+        Action::Open(Screen::Wallpaper),
+        Action::Open(Screen::Security),
+    ];
+    if s.wallpaper.is_some() {
+        general_rows.push(Row::new(l.pick(CLEAR_WALLPAPER)).icon(RED, Icon::Image));
+        general_acts.push(Action::ClearWallpaper);
+    }
+    let general = widgets::list(&mut c, t, f, y, &general_rows);
+    out.extend(hits(&general.rows, &general_acts));
     y = widgets::section(&mut c, t, f, general.bottom, "USB");
     let usb = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["文件传输", "檔案傳輸", "File transfer"])).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer))]);
     out.extend(hits(&usb.rows, &[Action::Toggle(Switch::FileTransfer)]));
@@ -3135,6 +3165,110 @@ pub fn choose(cx: &Ctx, place: Place) -> Frame {
     };
     let empty = l.pick(["暂无可安装的文件", "沒有可安裝的檔案", "Nothing here to install"]);
     listing(cx, s.folder(Screen::Choose(place)), place_name(l, place), absent, empty, Action::ChooseEntry, l.pick(["选择文件", "選擇檔案", "Choose a file"]))
+}
+
+/// The picture the pages sit on, chosen from the internal storage: the
+/// folder the stock file manager shows, one picture to pick. A picture
+/// that is not a PNG is not picked.
+pub fn wallpaper(cx: &Ctx) -> Frame {
+    let (s, l) = (cx.state, cx.state.lang);
+    let empty = l.pick(["暂无图片", "沒有圖片", "No pictures"]);
+    listing(cx, s.folder(Screen::Wallpaper), l.pick(["内部存储", "內部儲存空間", "Internal storage"]), None, empty, Action::WallpaperEntry, "Skyward")
+}
+
+/// The pages' password and how it is asked for: whether the work asks for
+/// the password before it goes on, setting one, and a finger kept for
+/// unlocking the pages once the reader is let in.
+pub fn security(cx: &Ctx) -> Frame {
+    let (s, l, t, f) = (cx.state, cx.state.lang, cx.t, cx.f);
+    let mut out = Vec::new();
+    let mut c = page(cx);
+    let mut y = t.m.dp(16.0);
+    let set = match &s.pass_kept {
+        None => l.pick(["设置密码", "設定密碼", "Set a password"]),
+        Some(_) => l.pick(["更改密码", "變更密碼", "Change the password"]),
+    };
+    y = widgets::section(&mut c, t, f, y, l.pick(["密码", "密碼", "Password"]));
+    let pass = widgets::list(&mut c, t, f, y, &[
+        Row::new(set).icon(BLUE, Icon::Lock).trail(Trail::Value(match &s.pass_kept { None => l.pick(["未设置", "未設定", "None"]).into(), Some(_) => l.pick(["已设置", "已設定", "Set"]).into() })),
+        Row::new(l.pick(["清除密码", "清除密碼", "Put the password away"])).icon(RED, Icon::Lock),
+    ]);
+    out.extend(hits(&pass.rows, &[Action::SetPassword, Action::ClearPassword]));
+    y = pass.bottom + t.m.gap * 2.0;
+    y = widgets::section(&mut c, t, f, y, l.pick(["验证", "驗證", "Asking"]));
+    let ask = widgets::list(&mut c, t, f, y, &[
+        Row::new(l.pick(["执行操作前使用密码验证", "執行操作前使用密碼驗證", "Ask for the password before the work goes on"]))
+            .icon(GREEN, Icon::Shield)
+            .trail(Trail::Switch(s.verify_work)),
+    ]);
+    out.extend(hits(&ask.rows, &[Action::Toggle(Switch::VerifyWork)]));
+    y = ask.bottom + t.m.gap * 2.0;
+    // A finger kept for unlocking the pages, once the reader is let in:
+    // named here for the unlock it comes to, taken up apart from that.
+    y = widgets::section(&mut c, t, f, y, l.pick(["指纹", "指紋", "Fingerprint"]));
+    let finger = widgets::list(&mut c, t, f, y, &[
+        Row::new(l.pick(["指纹解锁", "指紋解鎖", "Unlock with a finger"]))
+            .icon(PURPLE, Icon::Shield)
+            .trail(Trail::Value(match &s.finger { None => l.pick(["暂不可用", "暫不可用", "Not yet"]).into(), Some(_) => l.pick(["已录入", "已錄入", "Enrolled"]).into() })),
+    ]);
+    out.extend(hits(&finger.rows, &[Action::FingerNotice]));
+    let end = finger.bottom;
+    Frame { canvas: c, hits: out, bg: t.pal.bg, ..Frame::new(t, c, Vec::new(), l.pick(SECURITY_TITLE), t.m.dp(16.0)) }
+}
+
+/// The password being set, typed twice over the keyboard: once to set it
+/// and once to confirm it; once set, the page goes back to the security
+/// page.
+pub fn set_pass(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let m = &t.m;
+    let p = s.setting_pass.as_ref().expect("the set-pass page sets the password");
+    let mut c = page(cx);
+    let mut out = Vec::new();
+    let top = m.content_top;
+    let field = |y: f32| Rect::new(m.margin, y, m.w as f32 - m.margin * 2.0, m.dp(56.0));
+    let (first_y, second_y) = match p.field {
+        PassField::First => (l.pick(["输入新密码", "輸入新密碼", "Type the new password"]), l.pick(["再次输入以确认", "再次輸入以確認", "Type it again to confirm"])),
+        PassField::Again => (l.pick(["密码已输入", "密碼已輸入", "The password stands typed"]), l.pick(["再次输入以确认", "再次輸入以確認", "Type it again to confirm"])),
+    };
+    let y = widgets::section_first(&mut c, t, f, top, first_y);
+    let shown = if s.show_password { p.first.clone() } else { "•".repeat(p.first.chars().count()) };
+    let (below, mut caret) = widgets::text_field(&mut c, t, f, y, &shown);
+    out.push(Hit { rect: field(y), action: Action::TypePass(PassField::First) });
+    let y = widgets::section(&mut c, t, f, below + m.card_gap, second_y);
+    let shown = if s.show_password { p.again.clone() } else { "•".repeat(p.again.chars().count()) };
+    let (below, typed) = widgets::text_field(&mut c, t, f, y, &shown);
+    out.push(Hit { rect: field(y), action: Action::TypePass(PassField::Again) });
+    if p.field == PassField::Again {
+        caret = typed;
+    }
+    let show = widgets::list(&mut c, t, f, below + m.card_gap, &[Row::new(l.pick(SHOW_PASSWORD)).trail(Trail::Switch(s.show_password))]);
+    out.extend(hits(&show.rows, &[Action::Toggle(Switch::ShowPassword)]));
+    let enter = match p.field {
+        PassField::First => l.pick(["继续", "繼續", "Go on"]),
+        PassField::Again => l.pick(["完成", "完成", "Done"]),
+    };
+    keyboard_hits(&mut c, t, f, s, enter, &mut out);
+    Frame { caret: Some(caret), ..Frame::new(t, c, out, l.pick(SET_PASS_TITLE), top) }
+}
+
+/// The password the work asks for before it goes on: typed over the
+/// keyboard, the work goes on where it is given, and says why not where it
+/// is not.
+pub fn pass_gate(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let m = &t.m;
+    let mut c = page(cx);
+    let mut out = Vec::new();
+    let top = m.content_top;
+    let y = widgets::section_first(&mut c, t, f, top, l.pick(["输入密码", "輸入密碼", "Type the password"]));
+    let shown = if s.show_password { s.password.clone() } else { "•".repeat(s.password.chars().count()) };
+    let (below, caret) = widgets::text_field(&mut c, t, f, y, &shown);
+    out.push(Hit { rect: Rect::new(m.margin, y, m.w as f32 - m.margin * 2.0, m.dp(56.0)), action: Action::TypePass(PassField::Again) });
+    let show = widgets::list(&mut c, t, f, below + m.card_gap, &[Row::new(l.pick(SHOW_PASSWORD)).trail(Trail::Switch(s.show_password))]);
+    out.extend(hits(&show.rows, &[Action::Toggle(Switch::ShowPassword)]));
+    keyboard_hits(&mut c, t, f, s, l.pick(["解锁", "解鎖", "Unlock"]), &mut out);
+    Frame { caret: Some(caret), ..Frame::new(t, c, out, l.pick(PASS_GATE_TITLE), top) }
 }
 
 /// A folder laid out as the stock file manager lays one out: the path as
