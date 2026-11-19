@@ -103,7 +103,7 @@ probe = "http://connect.rom.miui.com/generate_204"
 [haptics]
 aw8697 = "/sys/bus/i2c/devices/2-005a"
 resonance = "/sys/bus/i2c/devices/2-005a/f0"
-strength = { lightest = 0.25, strongest = 0.75 }
+strength = { lightest = 0.25, strongest = 0.85 }
 
 # The update server the stock updater of the Chinese system asks.
 [update]

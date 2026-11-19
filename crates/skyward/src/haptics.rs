@@ -136,7 +136,6 @@ impl Aw8697 {
         ensure!(dir.is_dir(), "{} is not the folder of a motor's files", dir.display());
         Ok(Aw8697 { dir, strength })
     }
-
     /// Play one pulse at `share` of the motor's full strength. The chip
     /// drives the motor itself at its resonant frequency in the continuous
     /// mode, which asks nothing of the RAM the driver plays from in the
@@ -144,13 +143,19 @@ impl Aw8697 {
     /// `activate` would play, and what it does hold — left by whatever ran
     /// before — is heard as a rattle. So the mode goes to 1, the drive
     /// starts and stops by `cont`, and the duration is kept by the recovery
-    /// rather than the driver.
+    /// rather than the driver. The drive is kept short — about three
+    /// swings of this phone's three-hundred-and-seventy-five hertz motor —
+    /// so the tick lands crisp, a tap rather than a buzz: a longer drive
+    /// swings the motor to its stop through more full swings and rings on
+    /// mushy, while the driver's own turned-over braking takes the last of
+    /// them.
     fn play(&mut self, share: f32, ticks: bool) -> Result<Duration> {
-        let ms = if ticks { TICKS_MS } else { CLICK_MS };
-        // The gain register takes 7 bits: 127 is the driver's full drive, and
-        // anything above it wraps in the register and drives the motor with a
-        // torn waveform, which is heard as a rattle rather than a tick.
+        // The gain register takes 7 bits: 127 is the driver's full drive,
+        // and anything above it wraps in the register and drives the motor
+        // with a torn waveform, which is heard as a rattle rather than a
+        // tick.
         let level = (share.clamp(0.0, 1.0) * f32::from(GAIN_MAX)).round() as u8;
+        let ms = if ticks { TICKS_MS } else { CLICK_MS };
         self.write("activate_mode", "1")?;
         self.write("cont", "0")?;
         self.write("gain", &format!("{:#04x}", level))?;
@@ -162,7 +167,6 @@ impl Aw8697 {
         self.write("cont", "0")?;
         Ok(Duration::from_millis(u64::from(ms)))
     }
-
     fn write(&self, name: &str, value: &str) -> Result<()> {
         let path = self.dir.join(name);
         fs::write(&path, value).with_context(|| format!("write {value} to {}", path.display()))
@@ -174,9 +178,11 @@ impl Aw8697 {
 /// waveform, heard as a rattle.
 const GAIN_MAX: u8 = 127;
 
-/// How long a click plays on a motor driven by duration, as the phone's own
-/// system plays a key press: short enough to feel like a tap.
-const CLICK_MS: u32 = 12;
+/// How long a click plays on a motor driven by duration: about three
+/// whole swings of this phone's three-hundred-and-seventy hertz motor,
+/// short enough to land as a crisp tap, with the driver's own turned-over
+/// braking taking the swing away where the drive ends.
+const CLICK_MS: u32 = 8;
 
 /// How long the ticks of the screen going off play on such a motor.
 const TICKS_MS: u32 = 24;

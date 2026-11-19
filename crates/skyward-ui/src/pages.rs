@@ -3184,12 +3184,12 @@ pub fn security(cx: &Ctx) -> Frame {
     let (s, l, t, f) = (cx.state, cx.state.lang, cx.t, cx.f);
     let mut out = Vec::new();
     let mut c = page(cx);
-    let mut y = t.m.dp(16.0);
+    let top = t.m.content_top;
     let set = match &s.pass_kept {
         None => l.pick(["设置密码", "設定密碼", "Set a password"]),
         Some(_) => l.pick(["更改密码", "變更密碼", "Change the password"]),
     };
-    y = widgets::section(&mut c, t, f, y, l.pick(["密码", "密碼", "Password"]));
+    let mut y = widgets::section_first(&mut c, t, f, top, l.pick(["密码", "密碼", "Password"]));
     let pass = widgets::list(&mut c, t, f, y, &[
         Row::new(set).icon(BLUE, Icon::Lock).trail(Trail::Value(match &s.pass_kept { None => l.pick(["未设置", "未設定", "None"]), Some(_) => l.pick(["已设置", "已設定", "Set"]) })),
         Row::new(l.pick(["清除密码", "清除密碼", "Put the password away"])).icon(RED, Icon::Lock),
@@ -3213,7 +3213,7 @@ pub fn security(cx: &Ctx) -> Frame {
             .trail(Trail::Value(match &s.finger { None => l.pick(["暂不可用", "暫不可用", "Not yet"]), Some(_) => l.pick(["已录入", "已錄入", "Enrolled"]) })),
     ]);
     out.extend(hits(&finger.rows, &[Action::FingerNotice]));
-    Frame::new(t, c, out, l.pick(SECURITY_TITLE), t.m.dp(16.0))
+    Frame::new(t, c, out, l.pick(SECURITY_TITLE), top)
 }
 
 /// The password being set, typed twice over the keyboard: once to set it
@@ -3311,7 +3311,7 @@ fn listing(
 /// drawn as the row comes into view.
 pub fn row(screen: Screen, cx: &Ctx, i: usize, c: &mut Canvas) {
     match screen {
-        Screen::Files | Screen::Choose(_) => {
+        Screen::Files | Screen::Choose(_) | Screen::Wallpaper => {
             let folder = cx.state.folder(screen);
             let entries = folder.entries.as_ref().expect("a folder listed draws its rows");
             files::row(c, cx.t, cx.f, cx.state.lang, &entries[i], folder.listed, cx.state.time_zone);

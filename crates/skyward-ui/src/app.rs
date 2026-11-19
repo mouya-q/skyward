@@ -5705,8 +5705,15 @@ impl App {
                             let salt = new_salt();
                             let kept = format!("{salt}:{}", keep_digest(&p.first, &salt));
                             self.state.pass_kept = Some(kept);
-                            self.leave(true);
+                            if self.screen() == Screen::SetPass {
+                                self.leave(true);
+                                while matches!(self.screen(), Screen::SetPass) {
+                                    self.stack.pop();
+                                }
+                                self.settle_page();
+                            }
                             self.refresh();
+                            self.say(l.pick(["密码已设置", "密碼已設定", "The password is set"]), now);
                         } else {
                             self.state.setting_pass = Some(SettingPass::default());
                             self.refresh();

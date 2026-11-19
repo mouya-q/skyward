@@ -144,10 +144,13 @@ fn finit_module(file: &fs::File, params: &str) -> std::io::Result<()> {
     // not checked, as the phone's own modprobe loads the modules its own
     // init names: the maker builds them against the release its stock
     // kernel runs, and a kernel of the same source under another name
-    // refuses them otherwise, though the module itself fits.
+    // refuses them otherwise, though the module itself fits. Linux 4.19
+    // knows but the first bit of MODULE_INIT_IGNORE_MODVERSIONS: 0x2 is
+    // MODULE_INIT_IGNORE_VERMAGIC too, and more is refused with EINVAL.
     const IGNORE_VERMAGIC: libc::c_int = 0x2;
-    const IGNORE_MODVERSIONS: libc::c_int = 0x4;
-    let rc = unsafe { libc::syscall(libc::SYS_finit_module, file.as_raw_fd(), params.as_ptr(), IGNORE_VERMAGIC | IGNORE_MODVERSIONS) };
+    const IGNORE_MODVERSIONS: libc::c_int = 0x1;
+    let flags = IGNORE_VERMAGIC | IGNORE_MODVERSIONS;
+    let rc = unsafe { libc::syscall(libc::SYS_finit_module, file.as_raw_fd(), params.as_ptr(), flags) };
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
