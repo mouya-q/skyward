@@ -1,6 +1,6 @@
 use crate::app::{
     Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
-    FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, PassField, Pick, Place,
+    FileOp, FileTask, Fold, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, PassField, Pick, Place,
     Rows, Screen, SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target,
     UsbDrive, UsbLink, Wipe, ADDABLE,
     BACKUP_PARTS, DATA_ERASED, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, USB_DRIVE_UNREADABLE,
@@ -3177,22 +3177,12 @@ pub fn choose(cx: &Ctx, place: Place) -> Frame {
 pub fn wallpaper(cx: &Ctx) -> Frame {
     let (s, l) = (cx.state, cx.state.lang);
     let empty = l.pick(["暂无图片", "沒有圖片", "No pictures"]);
-    // A folder's own folders stay to walk to the pictures, and the
-    // pictures themselves stay to be picked: PNG, JPEG and WebP, any
-    // case. Everything else a folder holds is left out of the list.
-    let folder = s.folder(Screen::Wallpaper);
-    let shown = folder.entries.clone().map(|entries| {
-        entries.into_iter().filter(|e| match &e.kind {
-            FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => true,
-            FileKind::File | FileKind::Link { folder: false, .. } => {
-                let name = e.name.to_lowercase();
-                name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".webp")
-            }
-            FileKind::Special => false,
-        }).collect()
-    });
-    let pictures = Folder { path: folder.path.clone(), entries: shown, listed: folder.listed, left: Vec::new() };
-    listing(cx, &pictures, l.pick(["内部存储", "內部儲存空間", "Internal storage"]), None, empty, Action::WallpaperEntry, "Skyward")
+    // The folder holds only its own folders, to walk to the pictures, and
+    // the pictures themselves: what the runtime read of it, with what is
+    // not a picture left out. The wallpaper has its own folder, so the
+    // list it shows is the list its entries come from, with no filter the
+    // page adds on top of what the runtime already left out.
+    listing(cx, s.folder(Screen::Wallpaper), l.pick(["内部存储", "內部儲存空間", "Internal storage"]), None, empty, Action::WallpaperEntry, "Skyward")
 }
 
 /// The pages' password and how it is asked for: whether the work asks for

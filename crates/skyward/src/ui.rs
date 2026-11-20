@@ -320,6 +320,14 @@ fn list_place(app: &mut App, place: Place, folder: String) -> Result<()> {
     Ok(())
 }
 
+/// Read a folder of the internal storage to choose a picture to sit on the
+/// pages, as it is now; `folder` is its path from the storage's top.
+fn list_pictures(app: &mut App, folder: String) -> Result<()> {
+    let files = read_folder(&in_place(Place::Storage, &folder)).map_err(|e| format!("{e:#}"));
+    app.set_pictures(folder, files, unix_now()?);
+    Ok(())
+}
+
 /// Where `path`, from the top of `place`, is: internal storage is the
 /// owner's shared storage, where the data partition shows it.
 fn in_place(place: Place, path: &str) -> PathBuf {
@@ -2370,6 +2378,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     }
                     Effect::ReadDir(folder) => list(&mut app, folder)?,
                     Effect::ReadPlace(place, folder) => list_place(&mut app, place, folder)?,
+                    Effect::ReadPictures(folder) => list_pictures(&mut app, folder)?,
                     // A name taken where an entry goes is the user's to
                     // decide on before anything is written.
                     Effect::Paste { op, path, into, clash } => {

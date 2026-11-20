@@ -1750,6 +1750,9 @@ pub struct State {
     /// The folder of internal storage a file to install is chosen in, its
     /// path from the top of the storage.
     pub storage: Folder,
+    /// The folder of internal storage the page of the wallpaper shows,
+    /// holding only what a picture may be.
+    pub wallpapers: Folder,
     /// The USB drive plugged in, as the runtime last found it, and the
     /// folder of it a file to install is chosen in, its path from the top
     /// of the drive.
@@ -1877,6 +1880,7 @@ impl Default for State {
             held: None,
             files: Folder::new("/"),
             storage: Folder::new(""),
+            wallpapers: Folder::new(""),
             usb_drive: None,
             drive: Folder::new(""),
             file: None,
@@ -1926,21 +1930,21 @@ impl State {
     pub fn folder(&self, screen: Screen) -> &Folder {
         match screen {
             Screen::Files => &self.files,
-            Screen::Choose(Place::Storage) | Screen::Wallpaper => &self.storage,
+            Screen::Choose(Place::Storage) => &self.storage,
+            Screen::Wallpaper => &self.wallpapers,
             Screen::Choose(Place::UsbDrive) => &self.drive,
             other => unreachable!("{other:?} lists no folder"),
         }
     }
-
     fn folder_mut(&mut self, screen: Screen) -> &mut Folder {
         match screen {
             Screen::Files => &mut self.files,
-            Screen::Choose(Place::Storage) | Screen::Wallpaper => &mut self.storage,
+            Screen::Choose(Place::Storage) => &mut self.storage,
+            Screen::Wallpaper => &mut self.wallpapers,
             Screen::Choose(Place::UsbDrive) => &mut self.drive,
             other => unreachable!("{other:?} lists no folder"),
         }
     }
-
     /// Whether the files of `place` can be read: internal storage once it
     /// is open, a USB drive once the runtime shows it.
     pub fn place_open(&self, place: Place) -> bool {
@@ -2084,6 +2088,11 @@ pub enum Effect {
     /// List the folder at this path from the top of a place, to choose a
     /// file to install in, telling what it holds with [`App::set_place`].
     ReadPlace(Place, String),
+    /// List the folder at this path from the top of the internal storage,
+    /// to choose a picture to sit on the pages, telling what it holds with
+    /// [`App::set_pictures`]. The folder is read as any folder is, then what
+    /// is not a picture is left out.
+    ReadPictures(String),
     /// Open the data partition as far as it opens with nothing a user
     /// knows, telling what waits with [`App::data_waiting`] or why it did
     /// not open with [`App::data_failed`].
@@ -4131,7 +4140,20 @@ impl App {
         let files = files.map(|entries| entries.into_iter().filter(installable).collect());
         self.show_folder(Screen::Choose(place), folder, files, listed);
     }
-
+    /// The runtime listed a folder of the internal storage at `listed`, in
+    /// Unix seconds, or could not: it becomes the folder the wallpaper page
+    /// shows, with only what a picture may be left in.
+    pub fn set_pictures(&mut self, folder: String, files: Result<Vec<FileRow>, String>, listed: i64) {
+        let files = files.map(|entries| entries.into_iter().filter(|e| match &e.kind {
+            FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => true,
+            FileKind::File | FileKind::Link { folder: false, .. } => {
+                let name = e.name.to_lowercase();
+                name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".webp")
+            }
+            FileKind::Special => false,
+        }).collect());
+        self.show_folder(Screen::Wallpaper, folder, files, listed);
+    }
     /// The runtime found the USB drive plugged in, shown or not, or found
     /// none. Another drive, or none, starts its folders over from the top,
     /// and one shown while its page is up is read at once. The backups
@@ -4182,7 +4204,7 @@ impl App {
             let came_from = std::path::Path::new(left).strip_prefix(&folder).ok().and_then(|rest| rest.components().next());
             let name = came_from.map(|c| c.as_os_str().to_string_lossy().into_owned());
             let k = name.and_then(|name| files.as_ref().ok()?.iter().position(|e| e.name == name));
-            let row = if screen == Screen::Files { Action::OpenEntry } else { Action::ChooseEntry };
+            let row = if screen == Screen::Files { Action::OpenEntry } else if screen == Screen::Wallpaper { Action::WallpaperEntry } else { Action::ChooseEntry };
             self.top_mut().2 = match k {
                 Some(k) => Focus::On(Spot { stop: Stop::Hit(row(k)), group: Group::Page, rect: Rect::new(0.0, 0.0, 0.0, 0.0) }),
                 None => Focus::Unset,
@@ -4958,6 +4980,11 @@ impl App {
                     return vec![Effect::ReadPlace(place, up)];
                 }
             }
+            Screen::Wallpaper => {
+                if let Some(up) = self.state.folder(Screen::Wallpaper).up() {
+                    return vec![Effect::ReadPictures(up)];
+                }
+            }
             Screen::FileInfo => {
                 self.state.file = None;
                 self.state.asking_delete = false;
@@ -5207,7 +5234,7 @@ impl App {
             Screen::Systems => vec![Effect::ReadSystems],
             Screen::Restore => vec![self.find_backups()],
             Screen::Files => vec![Effect::ReadDir(self.state.files.path.clone())],
-            Screen::Wallpaper => vec![Effect::ReadPlace(Place::Storage, self.state.folder(s).path.clone())],
+            Screen::Wallpaper => vec![Effect::ReadPictures(self.state.folder(s).path.clone())],
             Screen::Choose(place) if self.state.place_open(place) => vec![Effect::ReadPlace(place, self.state.folder(s).path.clone())],
             Screen::Search => {
                 self.state.search.clear();
@@ -5649,6 +5676,7 @@ impl App {
                 if let Some(path) = self.state.folder(screen).ancestor(depth) {
                     return vec![match screen {
                         Screen::Choose(place) => Effect::ReadPlace(place, path),
+                        Screen::Wallpaper => Effect::ReadPictures(path),
                         _ => Effect::ReadDir(path),
                     }];
                 }
@@ -5662,7 +5690,7 @@ impl App {
                     FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => {
                         let scroll = self.top().1;
                         self.state.folder_mut(screen).leave(scroll);
-                        return vec![Effect::ReadPlace(Place::Storage, path)];
+                        return vec![Effect::ReadPictures(path)];
                     }
                     FileKind::File | FileKind::Link { folder: false, .. } => {
                         let name = entry.name.to_lowercase();
