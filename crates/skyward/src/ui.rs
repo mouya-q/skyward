@@ -1446,6 +1446,16 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                         h.ticks()?;
                     }
                 }
+                Effect::Key => {
+                    if let Some(h) = &mut haptics {
+                        h.key(app.state.vibration)?;
+                    }
+                }
+                Effect::KeyFirm => {
+                    if let Some(h) = &mut haptics {
+                        h.firm(app.state.vibration)?;
+                    }
+                }
                 other => unreachable!("time passing asks for nothing but the motor, not {other:?}"),
             }
         }
@@ -2257,6 +2267,16 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                     Effect::Haptic => {
                         if let Some(h) = &mut haptics {
                             h.click(app.state.vibration)?;
+                        }
+                    }
+                    Effect::Key => {
+                        if let Some(h) = &mut haptics {
+                            h.key(app.state.vibration)?;
+                        }
+                    }
+                    Effect::KeyFirm => {
+                        if let Some(h) = &mut haptics {
+                            h.firm(app.state.vibration)?;
                         }
                     }
                     Effect::Ticks => {

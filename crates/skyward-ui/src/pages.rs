@@ -3174,7 +3174,22 @@ pub fn choose(cx: &Ctx, place: Place) -> Frame {
 pub fn wallpaper(cx: &Ctx) -> Frame {
     let (s, l) = (cx.state, cx.state.lang);
     let empty = l.pick(["暂无图片", "沒有圖片", "No pictures"]);
-    listing(cx, s.folder(Screen::Wallpaper), l.pick(["内部存储", "內部儲存空間", "Internal storage"]), None, empty, Action::WallpaperEntry, "Skyward")
+    // A folder's own folders stay to walk to the pictures, and the
+    // pictures themselves stay to be picked: PNG, JPEG and WebP, any
+    // case. Everything else a folder holds is left out of the list.
+    let folder = s.folder(Screen::Wallpaper);
+    let shown = folder.entries.clone().map(|entries| {
+        entries.into_iter().filter(|e| match &e.kind {
+            FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => true,
+            FileKind::File | FileKind::Link { folder: false, .. } => {
+                let name = e.name.to_lowercase();
+                name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".webp")
+            }
+            FileKind::Special => false,
+        }).collect()
+    });
+    let pictures = Folder { path: folder.path.clone(), entries: shown, listed: folder.listed, left: Vec::new() };
+    listing(cx, &pictures, l.pick(["内部存储", "內部儲存空間", "Internal storage"]), None, empty, Action::WallpaperEntry, "Skyward")
 }
 
 /// The pages' password and how it is asked for: whether the work asks for

@@ -118,6 +118,23 @@ impl Haptics {
             Haptics::Aw8697(a) => a.play(share(&a.strength, position), false),
         }
     }
+    /// One light tap of the keyboard, at less than half the strength the
+    /// slider gives, so the keys feel apart from the controls the pages
+    /// carry: the work of a finger on glass rather than a switch thrown.
+    pub fn key(&mut self, position: f32) -> Result<Duration> {
+        match self {
+            Haptics::Periodic(p) => p.start(false, share(&p.strength, position) * 0.4),
+            Haptics::Aw8697(a) => a.play(share(&a.strength, position) * 0.4, false),
+        }
+    }
+    /// One firm tap, the return key's own, stronger and longer than a key's
+    /// light one: the key that says the typing stands done.
+    pub fn firm(&mut self, position: f32) -> Result<Duration> {
+        match self {
+            Haptics::Periodic(p) => p.start(false, share(&p.strength, position).min(1.0)),
+            Haptics::Aw8697(a) => a.play(share(&a.strength, position).min(1.0), false),
+        }
+    }
 
     /// The ticks of the screen going off, as strong as the phone's own
     /// system plays them whatever the slider says. Gives how long they play.

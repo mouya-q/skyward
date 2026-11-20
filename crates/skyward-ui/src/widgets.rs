@@ -2570,8 +2570,9 @@ pub enum Layer {
     Digits,
     /// The rest of the ASCII symbols.
     Symbols,
+    /// Digits alone, in the square the system lays a PIN over.
+    Numbers,
 }
-
 /// A key of the on-screen keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cap {
@@ -2583,7 +2584,6 @@ pub enum Cap {
     /// Show another layer.
     Show(Layer),
 }
-
 /// The keys between the side keys of each row, per layer. Together the
 /// digit and symbol layers hold every printable ASCII character.
 fn rows(layer: Layer) -> [&'static str; 3] {
@@ -2591,6 +2591,9 @@ fn rows(layer: Layer) -> [&'static str; 3] {
         Layer::Letters | Layer::Shifted => ["qwertyuiop", "asdfghjkl", "zxcvbnm"],
         Layer::Digits => ["1234567890", "-/:;()$&@\"", ".,?!'"],
         Layer::Symbols => ["[]{}#%^*+=", "_\\|~<>`", ".,?!'"],
+        // A PIN's square: three by four, one digit a key, the space
+        // between the rows for the gestures of the screen's edges.
+        Layer::Numbers => ["123", "456", "789"],
     }
 }
 
@@ -2630,6 +2633,23 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     let side_w = kw * 1.35;
     let row_top = |r: usize| top + m.dp(KEYBOARD_TOP_DP) + r as f32 * (kh + gy);
     let mut keys: Vec<(Rect, Cap)> = Vec::new();
+    // A PIN's square of digits: three digits a row, the fourth row 0 with
+    // the backspace beside it and the return under the rest, as the
+    // system's own lock lays them. Nothing else: no letters, no symbols.
+    if layer == Layer::Numbers {
+        let (col_w, gap) = (kw, gx * 2.0);
+        let grid_w = col_w * 3.0 + gap * 2.0;
+        let x0 = (w - grid_w) / 2.0;
+        for (r, row) in ["123", "456", "789"].iter().enumerate() {
+            for (k, ch) in row.chars().enumerate() {
+                keys.push((Rect::new(x0 + k as f32 * (col_w + gap), row_top(r), col_w, kh), Cap::Char(ch)));
+            }
+        }
+        let side_w2 = col_w;
+        keys.push((Rect::new(x0, row_top(3), col_w, kh), Cap::Char('0')));
+        keys.push((Rect::new(x0 + col_w + gap, row_top(3), side_w2, kh), Cap::Backspace));
+        keys.push((Rect::new(x0 + (col_w + gap) * 2.0, row_top(3), col_w, kh), Cap::Enter));
+    } else {
     let [first, second, third] = rows(layer);
     // Rows of plain keys are centred: the letters' second row sits half a
     // key in, as on any phone keyboard.
@@ -2646,6 +2666,8 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
         Layer::Letters | Layer::Shifted => Cap::Shift,
         Layer::Digits => Cap::Show(Layer::Symbols),
         Layer::Symbols => Cap::Show(Layer::Digits),
+        // The PIN's square has no shift key of its own.
+        Layer::Numbers => Cap::Show(Layer::Letters),
     };
     keys.push((Rect::new(left, row_top(2), side_w, kh), shift));
     let n = third.chars().count();
@@ -2659,6 +2681,8 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     let switch = match layer {
         Layer::Letters | Layer::Shifted => Cap::Show(Layer::Digits),
         Layer::Digits | Layer::Symbols => Cap::Show(Layer::Letters),
+        // The PIN's square has no switch key of its own.
+        Layer::Numbers => Cap::Show(Layer::Letters),
     };
     let enter_w = kw * 2.2;
     let space_x = left + side_w + gx + kw + gx;
@@ -2668,7 +2692,7 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     keys.push((Rect::new(space_x, row_top(3), space_w, kh), Cap::Space));
     keys.push((Rect::new(space_x + space_w + gx, row_top(3), kw, kh), Cap::Char('.')));
     keys.push((Rect::new(w - pad - enter_w, row_top(3), enter_w, kh), Cap::Enter));
-
+    }
     let radius = m.dp(KEY_RADIUS_DP);
     let glyph_px = m.dp(21.0);
     for &(r, cap) in &keys {

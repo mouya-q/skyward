@@ -908,6 +908,8 @@ pub enum Confirm {
     RemoveSystem,
     /// Install the system the installer holds with the room chosen.
     InstallSystem,
+    /// Put the password away, once the one kept is given for it.
+    ClearPass,
 }
 
 /// What the wipe page erases: everything a factory reset erases, or any of
@@ -2024,6 +2026,10 @@ pub enum Effect {
     Reboot(Target),
     /// A short tap of the vibration motor.
     Haptic,
+    /// A light tap of the keyboard's keys, softer than a control's own.
+    Key,
+    /// A firm tap of the return key, stronger than the keys around it.
+    KeyFirm,
     /// The motor's two quick ticks as the power key turns the screen off,
     /// as strong as the phone's own system plays them whatever the
     /// vibration settings say.
@@ -3322,6 +3328,16 @@ impl App {
             if let Some(lang) = named.or(kept.and_then(Settings::spoken)) {
                 self.state.lang = lang;
             }
+        }
+        // Where the work asks for the password before it goes on, the
+        // password is asked for as the recovery starts: the page of the
+        // password stands over the home page until it is given, and
+        // nothing of the recovery is worked with before it is. Given, the
+        // page goes and the home page stands as it did.
+        if self.state.verify_work && self.state.pass_kept.is_some() {
+            self.state.password.clear();
+            self.state.layer = Layer::Numbers;
+            self.push(Screen::PassGate);
         }
         self.refresh();
     }
@@ -5650,14 +5666,15 @@ impl App {
                     }
                     FileKind::File | FileKind::Link { folder: false, .. } => {
                         let name = entry.name.to_lowercase();
-                        if name.ends_with(".png") {
+                        let picture = name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".webp");
+                        if picture {
                             self.wallpaper(Some(&path));
                             if self.has_wallpaper() {
                                 self.state.wallpaper = Some(path);
                             }
                             return Vec::new();
                         }
-                        self.say(self.state.lang.pick(["请选择 PNG 图片", "請選擇 PNG 圖片", "Pick a PNG picture"]), 0);
+                        self.say(self.state.lang.pick(["请选择 PNG、JPG 或 WebP 图片", "請選擇 PNG、JPG 或 WebP 圖片", "Pick a PNG, JPG or WebP picture"]), 0);
                     }
                     FileKind::Special => unreachable!("a folder lists no special files"),
                 }
@@ -5669,14 +5686,19 @@ impl App {
             }
             Action::SetPassword => {
                 self.state.setting_pass = Some(SettingPass::default());
-                self.state.layer = Layer::Letters;
+                self.state.layer = Layer::Numbers;
                 self.open(Screen::SetPass);
                 return self.arrive_at(Screen::SetPass);
             }
             Action::ClearPassword => {
-                self.state.pass_kept = None;
-                self.state.verify_work = false;
-                self.refresh();
+                // The password kept stands until it is given for its own
+                // going away: the page of the password asks for it, and it
+                // goes where it is given.
+                self.state.password.clear();
+                self.state.layer = Layer::Numbers;
+                self.open(Screen::PassGate);
+                self.state.pass_gate = Some(Confirm::ClearPass);
+                return Vec::new();
             }
             Action::FingerNotice => {
                 self.say(l.pick(["指纹解锁尚未开放，敬请期待", "指紋解鎖尚未開放，敬請期待", "Fingerprint unlock is coming"]), now);
@@ -6197,7 +6219,17 @@ impl App {
         } else {
             self.refresh();
         }
-        Vec::new()
+        if !self.state.vibrate {
+            return Vec::new();
+        }
+        // The keys feel apart from one another: a key taps lightly, the
+        // backspace a shade more, and the return key firmly, the typing
+        // standing done.
+        match cap {
+            Cap::Enter => vec![Effect::KeyFirm],
+            Cap::Backspace => vec![Effect::Haptic],
+            _ => vec![Effect::Key],
+        }
     }
 
     pub fn touch(&mut self, ev: Touch, f: &Fonts, now: u64) -> Vec<Effect> {
@@ -6683,16 +6715,27 @@ impl App {
         // Where the work asks for the password before it goes on, the
         // password stands between the control and what it does: the page
         // of the password is put up in its place, the control waiting to
-        // go on once the password is given.
-        if self.state.verify_work && self.state.pass_kept.is_some() && self.screen() != Screen::PassGate {
+        // go on once the password is given. A restart is asked as often as
+        // the pages are left; it asks for no password, for the password
+        // guards the work on the phone's files, not the going away of the
+        // recovery itself.
+        if which != Confirm::Reboot && self.state.verify_work && self.state.pass_kept.is_some() && self.screen() != Screen::PassGate {
             self.state.pass_gate = Some(which);
             self.state.password.clear();
-            self.state.layer = Layer::Letters;
+            self.state.layer = Layer::Numbers;
             self.open(Screen::PassGate);
             return self.arrive_at(Screen::PassGate);
         }
         let (l, mut fx) = (self.state.lang, Vec::new());
         match which {
+            Confirm::ClearPass => {
+                // The password was given for its own going away; it goes.
+                self.state.pass_kept = None;
+                self.state.verify_work = false;
+                self.state.password.clear();
+                self.refresh();
+                self.say(l.pick(["密码已清除", "密碼已清除", "The password is put away"]), now);
+            }
             Confirm::Reboot => fx.push(Effect::Reboot(TARGETS[self.state.reboot])),
             Confirm::Wipe => {
                 let chosen: Vec<Wipe> = WIPES.iter().zip(self.state.wipe).filter(|(_, on)| *on).map(|(&w, _)| w).collect();
