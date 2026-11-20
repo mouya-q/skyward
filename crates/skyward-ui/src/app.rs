@@ -5750,8 +5750,22 @@ impl App {
                 let (salt, digest) = kept.split_once(':').unwrap_or((kept, ""));
                 if !digest.is_empty() && keep_digest(&given, salt) == digest {
                     let what = self.state.pass_gate.take();
-                    let fx = what.map(|which| self.confirmed(which, now)).unwrap_or_default();
-                    return fx;
+                    // The page of the password goes, whatever it was asked
+                    // for — the recovery starting, its own going away, or the
+                    // work of a control — and the page under it stands where
+                    // the work waits, or the home page as it was.
+                    if self.screen() == Screen::PassGate {
+                        self.leave(true);
+                        while matches!(self.screen(), Screen::PassGate) {
+                            self.stack.pop();
+                        }
+                        if self.stack.is_empty() {
+                            self.stack.push((Screen::Home, 0.0, Focus::Unset));
+                        }
+                        self.settle_page();
+                        self.refresh();
+                    }
+                    return what.map(|which| self.confirmed(which, now)).unwrap_or_default();
                 }
                 self.state.password.clear();
                 self.say(l.pick(["密码错误", "密碼錯誤", "Wrong password"]), now);

@@ -146,6 +146,9 @@ pub fn confirm_label(which: Confirm, s: &State) -> (&'static str, bool) {
         Confirm::SwitchSystem => (["滑动以切换并重启", "滑動以切換並重新啟動", "Slide to switch and reboot"], false),
         Confirm::RemoveSystem => (["滑动以删除", "滑動以刪除", "Slide to remove"], true),
         Confirm::InstallSystem => (INSTALL, false),
+        // The password's own going away, asked on the page of the password
+        // given for it.
+        Confirm::ClearPass => (["滑动以清除密码", "滑動以清除密碼", "Slide to put the password away"], true),
     };
     (s.lang.pick(label), danger)
 }
