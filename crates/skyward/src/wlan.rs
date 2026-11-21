@@ -902,10 +902,9 @@ fn registered_device(name: &str) -> Result<(u32, u32)> {
 /// carries none of the nodes the kernel's own would.
 fn make_node(at: &str, major: u32, minor: u32) -> Result<()> {
     use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let c = CString::new(at.as_bytes()).with_context(|| format!("{at} holds a NUL"))?;
+    let c = CString::new(at).with_context(|| format!("{at} holds a NUL"))?;
     let kind = libc::S_IFCHR | 0o600;
-    let dev = unsafe { libc::makedev(major, minor) };
+    let dev = libc::makedev(major, minor);
     if unsafe { libc::mknod(c.as_ptr(), kind, dev) } != 0 {
         return Err(std::io::Error::last_os_error()).with_context(|| format!("make {at}"));
     }
