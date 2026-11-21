@@ -2637,7 +2637,10 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     // the backspace beside it and the return under the rest, as the
     // system's own lock lays them. Nothing else: no letters, no symbols.
     if layer == Layer::Numbers {
-        let (col_w, gap) = (kw, gx * 2.0);
+        // The square spans the panel's own width between its side padding:
+        // a digit's key is as wide as the room between the keys beside it
+        // leaves, as the system's own lock lays them out.
+        let (col_w, gap) = ((w - pad * 2.0 - gx * 4.0) / 3.0, gx * 2.0);
         let grid_w = col_w * 3.0 + gap * 2.0;
         let x0 = (w - grid_w) / 2.0;
         for (r, row) in ["123", "456", "789"].iter().enumerate() {

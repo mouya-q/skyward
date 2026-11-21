@@ -3388,13 +3388,19 @@ impl App {
     /// picture `path` names is read and cropped for the screen, none while
     /// the settings name none. A picture that cannot be read is said on the
     /// screen and the pages sit on their own colour.
-    pub fn wallpaper(&mut self, path: Option<&str>) {
-        self.wallpaper = path.and_then(|p| {
-            let held = std::fs::read(p).ok()?;
-            Canvas::from_png(&held, self.w, self.h).ok()
+    pub fn wallpaper(&mut self, path: Option<&str>, now: u64) {
+        // The page names the picture from the top of the internal storage,
+        // where the data partition shows it: a path read as it stands
+        // answers as such, as one kept in the settings before, while the
+        // picture itself is read where the storage holds it.
+        let held = path.and_then(|p| {
+            let at = std::path::Path::new(p);
+            let read = if at.is_absolute() { at.to_path_buf() } else { std::path::Path::new("/sdcard").join(at) };
+            std::fs::read(read).ok()?
         });
+        self.wallpaper = held.and_then(|held| Canvas::from_png(&held, self.w, self.h).ok());
         if path.is_some() && self.wallpaper.is_none() {
-            self.say(crate::lang::Lang::Hans.pick(["无法读取背景图片", "無法讀取背景圖片", "Couldn't read the background picture"]), 0);
+            self.say(crate::lang::Lang::Hans.pick(["无法读取背景图片", "無法讀取背景圖片", "Couldn't read the background picture"]), now);
         }
         self.refresh();
     }
@@ -3407,7 +3413,7 @@ impl App {
     /// The data partition is open: every user's own files with it, or
     /// those of `waiting`, the user and the control their screen lock is
     /// answered with, still closed.
-    pub fn data_waiting(&mut self, waiting: Option<(u32, Keys)>) {
+    pub fn data_waiting(&mut self, waiting: Option<(u32, Keys)>, now: u64) {
         self.state.data = match waiting {
             Some((user, keys)) => Data::Locked { user, keys, checking: false },
             None => Data::Open,
@@ -3418,7 +3424,7 @@ impl App {
         // they sit on their own colour.
         if self.state.data == Data::Open && self.wallpaper.is_none() {
             if let Some(path) = self.state.wallpaper.clone() {
-                self.wallpaper(Some(&path));
+                self.wallpaper(Some(&path), now);
             }
         }
         self.refresh();
@@ -5696,19 +5702,19 @@ impl App {
                         let name = entry.name.to_lowercase();
                         let picture = name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".webp");
                         if picture {
-                            self.wallpaper(Some(&path));
+                            self.wallpaper(Some(&path), now);
                             if self.has_wallpaper() {
                                 self.state.wallpaper = Some(path);
                             }
                             return Vec::new();
                         }
-                        self.say(self.state.lang.pick(["请选择 PNG、JPG 或 WebP 图片", "請選擇 PNG、JPG 或 WebP 圖片", "Pick a PNG, JPG or WebP picture"]), 0);
+                        self.say(self.state.lang.pick(["请选择 PNG、JPG 或 WebP 图片", "請選擇 PNG、JPG 或 WebP 圖片", "Pick a PNG, JPG or WebP picture"]), now);
                     }
                     FileKind::Special => unreachable!("a folder lists no special files"),
                 }
             }
             Action::ClearWallpaper => {
-                self.wallpaper(None);
+                self.wallpaper(None, now);
                 self.state.wallpaper = None;
                 return Vec::new();
             }
@@ -9215,7 +9221,7 @@ mod tests {
     fn the_keys_join_a_patterns_dots_and_end_it_on_the_last_one_joined() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
-        app.data_waiting(Some((0, Keys::Pattern)));
+        app.data_waiting(Some((0, Keys::Pattern)), 0);
         app.frame(&f, &i);
         press(&mut app, Key::VolumeDown, 0);
         assert_eq!(lit(&mut app, &f, &i), Some(Stop::Dot(0)), "the grid's first dot is lit first");
@@ -9251,7 +9257,7 @@ mod tests {
     fn the_keys_type_a_screen_locks_code_on_its_keypad() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
-        app.data_waiting(Some((0, Keys::Digits)));
+        app.data_waiting(Some((0, Keys::Digits)), 0);
         app.frame(&f, &i);
         for ch in ['2', '5', '8', '0'] {
             light_on(&mut app, &f, &i, Stop::Hit(Action::Type(Cap::Char(ch))));
@@ -9515,7 +9521,7 @@ mod tests {
     fn a_zip_runs_its_install_script_once_agreed_to_and_shows_what_it_says() {
         let (f, i) = (fonts(), info());
         let mut app = opened(Screen::Install, &f, &i);
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         tap(&mut app, &f, &i, Action::Open(Screen::Choose(Place::Storage)));
         app.set_place(Place::Storage, String::new(), Ok(vec![entry("rom.zip", FileKind::File)]), LISTED);
         assert_eq!(tap(&mut app, &f, &i, Action::ChooseEntry(0)), vec![Effect::InstallFile(Place::Storage, "rom.zip".into())]);
@@ -9717,7 +9723,7 @@ mod tests {
         assert!(tap(&mut app, &f, &i, Action::ExportLogs).is_empty(), "internal storage waits for the data partition");
         app.tick(1000);
         assert_eq!(app.deadline(1000), Some(TOAST_MS), "and says so");
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         assert_eq!(tap(&mut app, &f, &i, Action::ExportLogs), vec![Effect::ExportLogs { recovery: false, kernel: true, storage: true }]);
         tap(&mut app, &f, &i, Action::LogPart(1));
         assert!(tap(&mut app, &f, &i, Action::ExportLogs).is_empty(), "nothing ticked, nothing saved");
@@ -9744,12 +9750,12 @@ mod tests {
         assert!(swipe(&mut app, &f, &i, Confirm::Backup).is_empty(), "internal storage waits for the data partition");
         assert_eq!(app.deadline(0), Some(TOAST_MS), "and says so");
         // The owner's files open first; another user's still wait.
-        app.data_waiting(Some((10, Keys::Digits)));
+        app.data_waiting(Some((10, Keys::Digits)), 0);
         let first = Effect::Backup { parts: [true, true, false, true], place: Place::Storage, compress: false, verify: true };
         assert_eq!(swipe(&mut app, &f, &i, Confirm::Backup), vec![first]);
         tap(&mut app, &f, &i, Action::BackupPart(2));
         assert!(swipe(&mut app, &f, &i, Confirm::Backup).is_empty(), "the data partition is backed up only with every user's files open");
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         tap(&mut app, &f, &i, Action::BackupPart(0));
         assert_eq!(app.state.backup, [false, true, true, true]);
         tap(&mut app, &f, &i, Action::BackupTo(Place::UsbDrive));
@@ -9826,7 +9832,7 @@ mod tests {
         tap(&mut app, &f, &i, Action::OpenBackup(0));
         assert!(swipe(&mut app, &f, &i, Confirm::Restore).is_empty());
         assert_eq!(app.deadline(0), Some(TOAST_MS), "the page says to decrypt first");
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         let fx = swipe(&mut app, &f, &i, Confirm::Restore);
         assert!(matches!(&fx[..], [Effect::Restore { parts: [false, false, true, false], .. }]), "{fx:?}");
     }
@@ -9851,7 +9857,7 @@ mod tests {
     fn a_backup_is_deleted_once_a_swipe_confirms_it() {
         let (f, i) = (fonts(), info());
         let mut app = opened(Screen::Restore, &f, &i);
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         let entry = found(Place::Storage, 1_792_348_260, [true; 4]);
         app.set_backups(vec![entry.clone()]);
         tap(&mut app, &f, &i, Action::OpenBackup(0));
@@ -9881,7 +9887,7 @@ mod tests {
     fn backing_up_shows_how_far_it_has_come_and_stops_when_asked() {
         let (f, i) = (fonts(), info());
         let mut app = opened(Screen::Backup, &f, &i);
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         app.backup_started(false, Place::Storage, true);
         assert_eq!(app.screen(), Screen::BackupJob);
         app.key(Key::Back, 0);
@@ -10098,9 +10104,9 @@ mod tests {
         assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Decrypt)), vec![Effect::OpenData], "no swipe first");
         assert_eq!(app.state.data, Data::Opening);
         assert!(!keys_shown(&mut app, &f, &i) && app.frame(&f, &i).pattern.is_none(), "nothing to answer yet");
-        app.data_waiting(Some((0, Keys::Pattern)));
+        app.data_waiting(Some((0, Keys::Pattern)), 0);
         assert!(app.frame(&f, &i).pattern.is_some(), "the owner set a pattern, so the grid shows");
-        app.data_waiting(Some((0, Keys::Digits)));
+        app.data_waiting(Some((0, Keys::Digits)), 0);
         assert!(keys_shown(&mut app, &f, &i), "for a code, the keypad");
         app.key(Key::Back, 0);
         assert!(tap(&mut app, &f, &i, Action::Open(Screen::Decrypt)).is_empty(), "open already, it is not opened again");
@@ -10124,7 +10130,7 @@ mod tests {
     fn the_code_typed_on_the_keypad_is_sent_once_and_checked_before_more_is_taken() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
-        app.data_waiting(Some((0, Keys::Digits)));
+        app.data_waiting(Some((0, Keys::Digits)), 0);
         for ch in "1234".chars() {
             tap(&mut app, &f, &i, Action::Type(Cap::Char(ch)));
         }
@@ -10139,7 +10145,7 @@ mod tests {
         app.unlock_failed("the secure world does not recognise that credential".into(), 0);
         assert!(keys_shown(&mut app, &f, &i), "turned down, it is asked for again");
         assert_eq!(app.deadline(0), Some(TOAST_MS), "with why");
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         assert_eq!(app.state.data, Data::Open);
     }
 
@@ -10147,7 +10153,7 @@ mod tests {
     fn nothing_typed_is_not_sent() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
-        app.data_waiting(Some((0, Keys::Digits)));
+        app.data_waiting(Some((0, Keys::Digits)), 0);
         assert_eq!(tap(&mut app, &f, &i, Action::Type(Cap::Enter)), vec![Effect::KeyFirm]);
         assert_eq!(app.deadline(0), Some(TOAST_MS), "the page says to type one first");
     }
@@ -10156,7 +10162,7 @@ mod tests {
     fn a_pattern_is_sent_as_the_numbers_of_the_dots_it_joins() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
-        app.data_waiting(Some((0, Keys::Pattern)));
+        app.data_waiting(Some((0, Keys::Pattern)), 0);
         let (cx, cy, span) = app.frame(&f, &i).pattern.expect("the grid is on the page");
         let dots = widgets::pattern_dots(cx, cy, span);
         let scroll = app.top().1;
@@ -10174,7 +10180,7 @@ mod tests {
     fn a_pattern_too_short_to_be_one_is_not_sent() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
-        app.data_waiting(Some((0, Keys::Pattern)));
+        app.data_waiting(Some((0, Keys::Pattern)), 0);
         let (cx, cy, span) = app.frame(&f, &i).pattern.expect("the grid is on the page");
         let dots = widgets::pattern_dots(cx, cy, span);
         let scroll = app.top().1;
@@ -10383,7 +10389,7 @@ mod tests {
         let mut app = opened(Screen::Install, &f, &i);
         // Closed, the storage leads to the decrypt page, which comes back.
         assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Decrypt)), vec![Effect::OpenData]);
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         tap(&mut app, &f, &i, Action::Skip);
         assert_eq!(app.screen(), Screen::Install);
         let storage = Screen::Choose(Place::Storage);
@@ -10447,7 +10453,7 @@ mod tests {
     fn a_file_waits_for_the_install_before_it_to_end() {
         let (f, i) = (fonts(), info());
         let mut app = opened(Screen::Install, &f, &i);
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         tap(&mut app, &f, &i, Action::Open(Screen::Choose(Place::Storage)));
         app.set_place(Place::Storage, String::new(), Ok(vec![entry("ota.zip", FileKind::File)]), LISTED);
         app.state.install = Install::Ending;
@@ -11596,7 +11602,7 @@ mod tests {
         // Without a tap of the motor where the settings turn it off, and into
         // the gallery once internal storage is open.
         app.state.vibrate = false;
-        app.data_waiting(None);
+        app.data_waiting(None, 0);
         app.key(Key::Power, 3000);
         assert_eq!(app.key(Key::VolumeDown, 3010), vec![Effect::Screenshot { storage: true }]);
     }

@@ -685,11 +685,47 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
         // waited for, so a driver that names why it did not come up says it
         // in the report of the failure itself.
         let mut heard = KernelLog::new();
+        // The driver of this phone's chip sits half made: the rest of it is
+        // made only as the userspace says so, through the control device it
+        // registered — opened, written `ON`, closed, as the phone's own wifi
+        // interface does. The recovery's own /dev carries none of the nodes
+        // the kernel's own would, so the node is made first, and the hold on
+        // it let go at once: the driver keeps what its own load made with
+        // nothing of it held open, as the phone's own system does.
+        if let Ok((major, minor)) = registered_device("wlan") {
+            if !Path::new("/dev/wlan").exists() {
+                make_node("/dev/wlan", major, minor)?;
+            }
+            let woken = std::fs::OpenOptions::new().read(true).write(true).open("/dev/wlan")
+                .and_then(|mut device| {
+                    use std::io::Write;
+                    device.write_all(b"ON").map(|_| device)
+                });
+            if let Err(e) = woken {
+                skyward_sys::kmsg(&format!("wake the WLAN driver through /dev/wlan: {e}"))?;
+            }
+        }
         let until = Instant::now() + INTERFACE_WAIT;
+        let mut told = Instant::now();
         while !net.exists() {
             ensure!(Instant::now() < until, "the driver made no {} in {} seconds; the kernel said: {}", cfg.interface, INTERFACE_WAIT.as_secs(), heard.last());
             thread::sleep(Duration::from_millis(100));
             heard.take();
+            // Every other second of waiting says where the bring-up stands:
+            // what the network folder holds, what the cnss folder shows, and
+            // what the kernel last said — the bring-up of this chip stops
+            // without a word where it does, and this tells where that is.
+            if told.elapsed() >= Duration::from_secs(2) {
+                told = Instant::now();
+                let nets = fs::read_dir("/sys/class/net").map(|seen| {
+                    let names = seen.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+                    names.join(",")
+                }).unwrap_or_default();
+                let cnss = fs::read_to_string("/sys/kernel/cnss/fs_ready").unwrap_or_default();
+                let said = heard.last();
+                let said: &str = if said.is_empty() { "nothing" } else { &said };
+                let _ = skyward_sys::kmsg(&format!("waiting for {}: net [{}], cnss fs_ready [{}], the kernel said: {}", cfg.interface, nets, cnss.trim(), said));
+            }
         }
     }
     iface::set_up(&cfg.interface, true)
@@ -839,4 +875,39 @@ fn end(child: &mut Child, control: Option<&Control>) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+/// The major and minor numbers the kernel gave the character device
+/// `name`, as it registered it: what a node for it is made of. None
+/// where the kernel named no such device, as the driver is not in.
+fn registered_device(name: &str) -> Result<(u32, u32)> {
+    let text = fs::read_to_string(format!("/sys/devices/virtual/{name}/{name}/uevent"))
+        .with_context(|| format!("read the uevent of {name}"))?;
+    let mut major = None;
+    let mut minor = None;
+    for line in text.lines() {
+        let (what, value) = line.split_once('=').context("a uevent line says what it is")?;
+        match what {
+            "MAJOR" => major = value.parse().ok(),
+            "MINOR" => minor = value.parse().ok(),
+            _ => {}
+        }
+    }
+    match (major, minor) {
+        (Some(major), Some(minor)) => Ok((major, minor)),
+        _ => bail!("the uevent of {name} says no numbers"),
+    }
+}
+/// Make the character device node at `at`, of major `major` and minor
+/// `minor`, readable and writable by its owner: the recovery's own /dev
+/// carries none of the nodes the kernel's own would.
+fn make_node(at: &str, major: u32, minor: u32) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let c = CString::new(at.as_bytes()).with_context(|| format!("{at} holds a NUL"))?;
+    let kind = libc::S_IFCHR | 0o600;
+    let dev = unsafe { libc::makedev(major, minor) };
+    if unsafe { libc::mknod(c.as_ptr(), kind, dev) } != 0 {
+        return Err(std::io::Error::last_os_error()).with_context(|| format!("make {at}"));
+    }
+    Ok(())
 }

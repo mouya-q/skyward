@@ -869,7 +869,7 @@ fn show_closed(app: &mut App, closed: &[Closed]) -> Result<()> {
         };
         (c.user, keys)
     });
-    app.data_waiting(waiting);
+    app.data_waiting(waiting, unix_ms_now()?.max(0) as u64);
     Ok(())
 }
 
@@ -1127,7 +1127,7 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
     // The pages sit on the picture the settings name, read and cropped for
     // the screen; where it cannot be read, they sit on their own colour.
     if let Some(path) = app.state.wallpaper.clone() {
-        app.wallpaper(Some(&path));
+        app.wallpaper(Some(&path), unix_ms_now()?.max(0) as u64);
     }
     skyward_sys::kmsg(&format!(
         "the pages speak {:?}, {}, and the locale named is {}",
