@@ -3393,10 +3393,10 @@ impl App {
         // where the data partition shows it: a path read as it stands
         // answers as such, as one kept in the settings before, while the
         // picture itself is read where the storage holds it.
-        let held = path.and_then(|p| {
+        let held: Option<Vec<u8>> = path.and_then(|p| {
             let at = std::path::Path::new(p);
             let read = if at.is_absolute() { at.to_path_buf() } else { std::path::Path::new("/sdcard").join(at) };
-            std::fs::read(read).ok()?
+            std::fs::read(read).ok()
         });
         self.wallpaper = held.and_then(|held| Canvas::from_png(&held, self.w, self.h).ok());
         if path.is_some() && self.wallpaper.is_none() {
