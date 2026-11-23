@@ -5,7 +5,10 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 /// The driver every program on the phone reaches its neighbours through.
-const DEVICE: &str = "/dev/binder";
+/// A kernel that has the driver's own filesystem has no node of its own at
+/// the top of `/dev`: the nodes are inside the filesystem, where the phone's
+/// own init mounts them and links them. Both places are looked for.
+const DEVICE: [&str; 2] = ["/dev/binder", "/dev/binderfs/binder"];
 
 /// The second driver, which the phone's hardware services talk over. Older
 /// phones have the node itself; newer ones have the driver's own filesystem
@@ -95,7 +98,12 @@ pub struct Binder {
 
 impl Binder {
     pub fn open() -> Result<Binder> {
-        Binder::on(Path::new(DEVICE))
+        let node = DEVICE
+            .iter()
+            .map(Path::new)
+            .find(|p| p.exists())
+            .with_context(|| format!("none of {} is here, so no service can be reached", DEVICE.join(" or ")))?;
+        Binder::on(node)
     }
 
     /// The driver the phone's hardware services talk over, which is a
@@ -121,223 +129,3 @@ impl Binder {
         let mut threads: u32 = 0;
         unsafe { call(&file, BINDER_SET_MAX_THREADS, &mut threads as *mut u32 as *mut libc::c_void) }.context("give up taking calls")?;
         let map = unsafe {
-            libc::mmap(std::ptr::null_mut(), MAP_BYTES, libc::PROT_READ, libc::MAP_PRIVATE | libc::MAP_NORESERVE, file.as_raw_fd(), 0)
-        };
-        if map == libc::MAP_FAILED {
-            return Err(std::io::Error::last_os_error()).context("map the driver's replies");
-        }
-        Ok(Binder { file, map })
-    }
-
-    /// The service directory, which every program reaches at handle 0. The
-    /// driver carries a call to whichever process holds that place without
-    /// being given a share of it first, so this takes none and gives none
-    /// back: taking one and giving it back on every look-up would have the
-    /// directory's own object counted up and down from outside while it is
-    /// still starting.
-    pub fn directory(&self) -> Result<Handle<'_>> {
-        Ok(Handle { binder: self, handle: 0, held: false })
-    }
-
-    /// Call method `code` on `handle` and wait for what it answers.
-    pub fn transact(&self, handle: u32, code: u32, data: &impl Payload) -> Result<Reply<'_>> {
-        let payload = data.values();
-        let addresses = data.addresses();
-        let td = TransactionData {
-            target: handle as u64,
-            code,
-            flags: TF_ACCEPT_FDS,
-            data_size: payload.len() as u64,
-            offsets_size: (addresses.len() * 8) as u64,
-            buffer: payload.as_ptr() as u64,
-            offsets: addresses.as_ptr() as u64,
-            ..TransactionData::default()
-        };
-        // A call that hands over addresses is sent the way that tells the
-        // driver how much room to set aside for what they point at.
-        let mut write = match addresses.is_empty() {
-            true => BC_TRANSACTION.to_ne_bytes().to_vec(),
-            false => BC_TRANSACTION_SG.to_ne_bytes().to_vec(),
-        };
-        write.extend_from_slice(bytes_of(&td));
-        if !addresses.is_empty() {
-            write.extend_from_slice(&data.pointed().to_ne_bytes());
-        }
-        // The driver answers a call with a handful of short notices; what
-        // the other side sent lands in the mapped room, not here.
-        let mut read = [0u8; 256];
-        let mut sent = false;
-        loop {
-            let mut bwr = WriteRead {
-                write_size: if sent { 0 } else { write.len() as u64 },
-                write_buffer: write.as_ptr() as u64,
-                read_size: read.len() as u64,
-                read_buffer: read.as_mut_ptr() as u64,
-                ..WriteRead::default()
-            };
-            unsafe { call(&self.file, BINDER_WRITE_READ, &mut bwr as *mut WriteRead as *mut libc::c_void) }.context("send a call")?;
-            sent = true;
-            if let Some(reply) = self.answer(&read[..bwr.read_consumed as usize])? {
-                return Ok(reply);
-            }
-        }
-    }
-
-    /// What the driver said back, and the reply among it if it has come.
-    fn answer(&self, mut said: &[u8]) -> Result<Option<Reply<'_>>> {
-        while said.len() >= 4 {
-            let note = u32::from_ne_bytes(said[..4].try_into().expect("four bytes"));
-            said = &said[4..];
-            let mut skip = |n: usize| {
-                let (head, rest) = said.split_at(n.min(said.len()));
-                said = rest;
-                head
-            };
-            match note {
-                BR_NOOP | BR_TRANSACTION_COMPLETE | BR_SPAWN_LOOPER => {}
-                BR_INCREFS | BR_ACQUIRE | BR_RELEASE | BR_DECREFS => {
-                    skip(16);
-                }
-                BR_REPLY => {
-                    let raw = skip(size_of::<TransactionData>());
-                    let td: TransactionData = unsafe { std::ptr::read_unaligned(raw.as_ptr().cast()) };
-                    if td.flags & TF_STATUS_CODE != 0 {
-                        let code = unsafe { std::ptr::read_unaligned(td.buffer as *const i32) };
-                        self.free(td.buffer)?;
-                        bail!("the call failed in the driver with error {code}");
-                    }
-                    let data = unsafe { std::slice::from_raw_parts(td.buffer as *const u8, td.data_size as usize) };
-                    return Ok(Some(Reply { binder: self, buffer: td.buffer, data }));
-                }
-                BR_DEAD_REPLY => bail!("the other side is gone"),
-                BR_FAILED_REPLY => bail!("the driver refused the call"),
-                BR_FROZEN_REPLY => bail!("the other side is frozen"),
-                BR_ERROR => {
-                    let raw = skip(4);
-                    let code = i32::from_ne_bytes(raw.try_into().unwrap_or([0; 4]));
-                    bail!("the driver reported error {code}");
-                }
-                other => bail!("the driver said {other:#x}, which Skyward does not know"),
-            }
-        }
-        Ok(None)
-    }
-
-    /// Tell the driver something that needs no answer.
-    fn tell(&self, note: u32, payload: &[u8]) -> Result<()> {
-        let mut write = note.to_ne_bytes().to_vec();
-        write.extend_from_slice(payload);
-        let mut bwr = WriteRead {
-            write_size: write.len() as u64,
-            write_buffer: write.as_ptr() as u64,
-            ..WriteRead::default()
-        };
-        unsafe { call(&self.file, BINDER_WRITE_READ, &mut bwr as *mut WriteRead as *mut libc::c_void) }.context("tell the driver")
-    }
-
-    fn free(&self, buffer: u64) -> Result<()> {
-        self.tell(BC_FREE_BUFFER, &buffer.to_ne_bytes())
-    }
-}
-
-impl Drop for Binder {
-    fn drop(&mut self) {
-        unsafe { libc::munmap(self.map, MAP_BYTES) };
-    }
-}
-
-unsafe fn call(file: &File, request: u32, arg: *mut libc::c_void) -> Result<()> {
-    // The driver answers a signal with EINTR and expects the call again.
-    loop {
-        if libc::ioctl(file.as_raw_fd(), request as libc::Ioctl, arg) >= 0 {
-            return Ok(());
-        }
-        let err = std::io::Error::last_os_error();
-        if err.kind() != std::io::ErrorKind::Interrupted {
-            return Err(err.into());
-        }
-    }
-}
-
-/// An object in another process, held open until this goes out of scope.
-pub struct Handle<'a> {
-    binder: &'a Binder,
-    handle: u32,
-    /// Whether a share of the object was taken, and so has to be given
-    /// back.
-    held: bool,
-}
-
-impl<'a> Handle<'a> {
-    /// Take a share of an object the driver has just named, so it outlives
-    /// the reply that carried it.
-    pub fn hold(binder: &'a Binder, handle: u32) -> Result<Handle<'a>> {
-        binder.tell(BC_ACQUIRE, &handle.to_ne_bytes()).context("hold an object open")?;
-        Ok(Handle { binder, handle, held: true })
-    }
-
-    pub fn transact(&self, code: u32, data: &impl Payload) -> Result<Reply<'a>> {
-        self.binder.transact(self.handle, code, data)
-    }
-}
-
-impl Drop for Handle<'_> {
-    fn drop(&mut self) {
-        if self.held {
-            let _ = self.binder.tell(BC_RELEASE, &self.handle.to_ne_bytes());
-        }
-    }
-}
-
-/// What the other side answered, in the driver's own room until it is read.
-pub struct Reply<'a> {
-    binder: &'a Binder,
-    buffer: u64,
-    data: &'a [u8],
-}
-
-impl<'a> Reply<'a> {
-    pub fn read(&self) -> Reader<'_> {
-        Reader::new(self.data)
-    }
-
-    /// The reply as it lies in the driver's room, for a layout the plain
-    /// reader does not know.
-    pub fn bytes(&self) -> &'a [u8] {
-        self.data
-    }
-
-    pub fn binder(&self) -> &'a Binder {
-        self.binder
-    }
-}
-
-impl Drop for Reply<'_> {
-    fn drop(&mut self) {
-        let _ = self.binder.free(self.buffer);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_numbers_match_the_kernels_headers() {
-        assert_eq!(BINDER_WRITE_READ, 0xc030_6201);
-        assert_eq!(BINDER_VERSION, 0xc004_6209);
-        assert_eq!(BINDER_SET_MAX_THREADS, 0x4004_6205);
-        assert_eq!(BC_TRANSACTION, 0x4040_6300);
-        assert_eq!(BC_TRANSACTION_SG, 0x4048_6311);
-        assert_eq!(BC_FREE_BUFFER, 0x4008_6303);
-        assert_eq!(BR_REPLY, 0x8040_7203);
-        assert_eq!(BR_NOOP, 0x0000_720c);
-        assert_eq!(BR_DEAD_REPLY, 0x0000_7205);
-    }
-
-    #[test]
-    fn the_structures_are_the_size_the_driver_reads() {
-        assert_eq!(size_of::<WriteRead>(), 48);
-        assert_eq!(size_of::<TransactionData>(), 64);
-    }
-}
