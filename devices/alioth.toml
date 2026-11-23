@@ -1,0 +1,127 @@
+[device]
+codename = "alioth"
+brand = "Redmi"
+model = "REDMI K40"
+ab = true
+soc = { hans = "骁龙® 870 移动平台 久耀星璇", hant = "Snapdragon® 870 行動平台", en = "Snapdragon® 870 Mobile Platform" }
+os_version_prop = "ro.mi.os.version.incremental"
+
+[display]
+width = 1080
+height = 2400
+density = 440
+diagonal = 6.67
+
+# [backlight]
+# path = "/sys/class/backlight/panel0-backlight/brightness"
+# max_path = "/sys/class/backlight/panel0-backlight/max_brightness"
+
+[modules]
+sources = ["vendor_boot", "vendor_dlkm", "vendor"]
+
+[partitions]
+mounted = ["persist"]
+
+[[owners]]
+user = "system"
+group = "system"
+mode = 0o664
+paths = [
+    "/dev/xiaomi-touch",
+    "/sys/class/touch/touch_dev/palm_sensor",
+    "/proc/tp_selftest",
+    "/proc/tp_fw_version",
+    "/proc/tp_lockdown_info",
+]
+
+[[service]]
+path = "/vendor/bin/sh"
+args = ["/vendor/bin/init.qcom.post_boot.sh"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "root"
+groups = ["root", "system", "wakelock", "graphics"]
+
+
+[[service]]
+path = "/mnt/system/system/bin/servicemanager"
+libraries = ["/mnt/system/system/lib64"]
+user = "system"
+groups = ["system", "readproc"]
+
+[[service]]
+path = "/mnt/system_ext/bin/hwservicemanager"
+libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64", "/mnt/system_ext/lib64"]
+ready_property = "hwservicemanager.ready"
+user = "system"
+groups = ["system", "readproc"]
+
+[[service]]
+path = "/vendor/bin/hw/vendor.qti.hardware.qseecom@1.0-service"
+libraries = ["/system/lib64", "/vendor/lib64"]
+user = "root"
+groups = ["root", "drmrpc"]
+
+[[service]]
+path = "/vendor/bin/hw/android.hardware.keymaster@4.1-service-qti"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_hardware_service = "android.hardware.keymaster@4.1::IKeymasterDevice/default"
+user = "system"
+groups = ["system", "drmrpc"]
+
+[[service]]
+path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
+user = "system"
+groups = ["system", "drmrpc"]
+
+[update]
+server = "https://update.miui.com/updates/miotaV3.php"
+
+[stock]
+version = "OS1.0.10.0.TKHCNXM"
+package = "https://github.com/VastCoreOS3/Alioth_Skyward_Recovery/releases/download/alioth/alioth_images_OS1.0.10.0.TKHCNXM_20251029.0000.00_13.0_cn_89264178e2.tgz"
+recovery = "745ef81b4f68fe7f10473cbc3bd84d3ac622110723ec6d0a2faec3d5dafcdd99"
+
+[haptics]
+aw8697 = "/sys/bus/i2c/devices/2-005a"
+resonance = "/sys/bus/i2c/devices/2-005a/f0"
+strength = { lightest = 0.5, strongest = 1.0 }
+
+
+# [wlan]
+# modules = []
+# writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+# firmware = [
+#     { name = "wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/qca6390/WCNSS_qcom_cfg.ini" },
+#     { name = "wlan/qca_cld/qca6390/wlan_mac.bin", partition = "persist", path = "wlan_mac.bin" },
+#     { name = "amss.bin", partition = "modem_a", path = "image/qca6390/amss20.bin" },
+#     { name = "amss20.bin", partition = "modem_a", path = "image/qca6390/amss20.bin" },
+#     { name = "m3.bin", partition = "modem_a", path = "image/qca6390/m3.bin" },
+#     { name = "bdwlan.bin", partition = "modem_a", path = "image/qca6390/bdwlan.elf" },
+#     { name = "regdb.bin", partition = "modem_a", path = "image/qca6390/regdb.bin" },
+# ]
+# interface = "wlan0"
+# supplicant = "/vendor/bin/hw/wpa_supplicant"
+# libraries = ["/vendor/lib64", "/system/lib64"]
+# service = "android.hardware.wifi.supplicant.ISupplicant/default"
+# probe = "http://connect.rom.miui.com/generate_204"
+
+
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+data_skipped = ["vendor/tzstorage", "vendor/qtee", "vendor/fingerprint", "vendor/fpc", "vendor/goodix", "vendor/misys"]
+
+[wipe]
+logs = [
+    "/data/miuilog",
+    "/data/vendor/diag",
+    "/data/vendor/log",
+    "/data/vendor/ramdump",
+    "/data/vendor/ramdump_ssr",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+    "/data/vendor/wlan_logs",
+    "/data/vendor/sensor_log",
+]
