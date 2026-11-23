@@ -1,7 +1,22 @@
+# devices/alioth.toml, checked against the alioth device trees on GitHub.
+#
+# Where the facts come from:
+#   PocoF3Releases/device_xiaomi_alioth             device.mk (TARGET_IS_VAB := true)
+#   LineageOS/android_device_xiaomi_sm8250-common  rootdir/etc/fstab_AB.qcom
+#   LineageOS/android_device_xiaomi_sm8250-common  BoardConfigCommon.mk
+#   LineageOS/android_kernel_xiaomi_sm8250         arch/arm64/configs/vendor/xiaomi/alioth.config
+#   nebrassy/device_xiaomi_alioth-TWRP             recovery/root/init.recovery.qcom.rc
+#   Sanjis-Android-Playground/device_xiaomi_alioth_recovery  BoardConfig.mk, README.md, init.recovery.qcom.rc
+# Lines marked TODO need one look at the phone; nothing else here is a guess.
+
 [device]
 codename = "alioth"
 brand = "Redmi"
 model = "REDMI K40"
+# Virtual A/B: the trees built on this phone's HyperOS firmware set
+# TARGET_IS_VAB := true, and fstab_AB.qcom mounts every logical partition
+# with slotselect, so boot, init_boot and recovery are slotted and the
+# recovery written here goes to the slot the phone runs.
 ab = true
 soc = { hans = "骁龙® 870 移动平台 久耀星璇", hant = "Snapdragon® 870 行動平台", en = "Snapdragon® 870 Mobile Platform" }
 os_version_prop = "ro.mi.os.version.incremental"
@@ -12,16 +27,25 @@ height = 2400
 density = 440
 diagonal = 6.67
 
-# [backlight]
-# path = "/sys/class/backlight/panel0-backlight/brightness"
-# max_path = "/sys/class/backlight/panel0-backlight/max_brightness"
+# There is no [backlight] section in skyward-config: the brightness of the
+# panel is not chosen here. The phone's own init names the file, in
+# init.qcom.rc, as /sys/class/backlight/panel0-backlight/brightness with its
+# max_brightness beside it, so that is where the recovery would look.
 
 [modules]
+# Touch is CONFIG_TOUCHSCREEN_FOCALTECH, built into this phone's kernel, and
+# the fingerprint switches come with CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE,
+# so no module is loaded for either.
 sources = ["vendor_boot", "vendor_dlkm", "vendor"]
+# TODO: the WLAN driver is the vendor's qca_cld3. If it is a module rather
+# than built in, name it here, as it is listed in the installed system's
+# /vendor/lib/modules.
 
 [partitions]
 mounted = ["persist"]
 
+# /dev/xiaomi-touch and the touch feature's switches, as init.xiaomi.rc and
+# ueventd.qcom.rc hand them to system on the phone itself.
 [[owners]]
 user = "system"
 group = "system"
@@ -34,11 +58,16 @@ paths = [
     "/proc/tp_lockdown_info",
 ]
 
+# init.qcom.rc runs this as qcom-post-boot on sys.boot_completed. It ends in
+# work a recovery cannot do — it reaches into a data partition a recovery
+# mounts none of — so its failure is said and the programs after it still
+# start; without that, a non-zero exit would hold up every service below.
 [[service]]
 path = "/vendor/bin/sh"
 args = ["/vendor/bin/init.qcom.post_boot.sh"]
 libraries = ["/system/lib64", "/vendor/lib64"]
 oneshot = true
+best_effort = true
 user = "root"
 groups = ["root", "system", "wakelock", "graphics"]
 
@@ -56,22 +85,26 @@ ready_property = "hwservicemanager.ready"
 user = "system"
 groups = ["system", "readproc"]
 
+# The trees that give this phone a working recovery carry qseecomd rather
+# than the qseecom service, and put /vendor/lib64/hw on the path the
+# hardware libraries are found on, which is where the keymaster's own
+# library lives.
 [[service]]
-path = "/vendor/bin/hw/vendor.qti.hardware.qseecom@1.0-service"
-libraries = ["/system/lib64", "/vendor/lib64"]
+path = "/vendor/bin/qseecomd"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
 user = "root"
-groups = ["root", "drmrpc"]
+groups = ["root", "system", "drmrpc"]
 
 [[service]]
 path = "/vendor/bin/hw/android.hardware.keymaster@4.1-service-qti"
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
 ready_hardware_service = "android.hardware.keymaster@4.1::IKeymasterDevice/default"
 user = "system"
 groups = ["system", "drmrpc"]
 
 [[service]]
 path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti"
-libraries = ["/system/lib64", "/vendor/lib64"]
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw"]
 ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
 user = "system"
 groups = ["system", "drmrpc"]
@@ -83,31 +116,42 @@ server = "https://update.miui.com/updates/miotaV3.php"
 version = "OS1.0.10.0.TKHCNXM"
 package = "https://github.com/VastCoreOS3/Alioth_Skyward_Recovery/releases/download/alioth/alioth_images_OS1.0.10.0.TKHCNXM_20251029.0000.00_13.0_cn_89264178e2.tgz"
 recovery = "745ef81b4f68fe7f10473cbc3bd84d3ac622110723ec6d0a2faec3d5dafcdd99"
+# TODO: the OrangeFox tree for this phone builds with
+# BOARD_USES_RECOVERY_AS_BOOT, and says in its own words that the ROM's
+# boot.img is the recovery partition here. So there is no recovery
+# partition to write, and the image goes to boot, or to vendor_boot for
+# the vendor_boot variants. Check that the stock package this config
+# points at really carries a recovery, and which partition the built
+# image is meant for, before flashing anything.
 
+# An Awinic AW8697 on i2c-2 at 005a, CONFIG_INPUT_AW8697_HAPTIC in this
+# phone's kernel, as umi. Its driver loads aw8697_haptic.bin from
+# /lib/firmware, so that file has to be there before it probes.
+# TODO: whether the resonance is reported in f0 or in f0_save, and whether
+# the driver finds its firmware without it being put in place.
 [haptics]
 aw8697 = "/sys/bus/i2c/devices/2-005a"
 resonance = "/sys/bus/i2c/devices/2-005a/f0"
 strength = { lightest = 0.5, strongest = 1.0 }
 
-
+# TODO: K40's WLAN is the vendor's qca_cld3 on the PCIe, woken through
+# /dev/wlan with ON (ueventd.qcom.rc) rather than through a cnss switch.
+# Fill this once the installed system tells which module and which firmware
+# names it asks for:
+#
+#   ls /vendor/lib/modules | grep qca_cld3
+#   ls /vendor/etc/wifi
+#   ls /vendor/firmware_mnt/image | grep -Ei 'bdwlan|amss|m3|regdb'
+#
 # [wlan]
-# modules = []
-# writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
-# firmware = [
-#     { name = "wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/qca6390/WCNSS_qcom_cfg.ini" },
-#     { name = "wlan/qca_cld/qca6390/wlan_mac.bin", partition = "persist", path = "wlan_mac.bin" },
-#     { name = "amss.bin", partition = "modem_a", path = "image/qca6390/amss20.bin" },
-#     { name = "amss20.bin", partition = "modem_a", path = "image/qca6390/amss20.bin" },
-#     { name = "m3.bin", partition = "modem_a", path = "image/qca6390/m3.bin" },
-#     { name = "bdwlan.bin", partition = "modem_a", path = "image/qca6390/bdwlan.elf" },
-#     { name = "regdb.bin", partition = "modem_a", path = "image/qca6390/regdb.bin" },
-# ]
+# modules = ["qca_cld3_wlan"]
+# writes = [{ path = "/dev/wlan", value = "ON" }]
+# firmware = []
 # interface = "wlan0"
 # supplicant = "/vendor/bin/hw/wpa_supplicant"
 # libraries = ["/vendor/lib64", "/system/lib64"]
 # service = "android.hardware.wifi.supplicant.ISupplicant/default"
 # probe = "http://connect.rom.miui.com/generate_204"
-
 
 [backup]
 efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
