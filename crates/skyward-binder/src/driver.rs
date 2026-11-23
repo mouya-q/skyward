@@ -5,7 +5,10 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 
 /// The driver every program on the phone reaches its neighbours through.
-const DEVICE: &str = "/dev/binder";
+/// A kernel that has the driver's own filesystem has no node of its own at
+/// the top of `/dev`: the nodes are inside the filesystem, where the phone's
+/// own init mounts them and links them. Both places are looked for.
+const DEVICE: [&str; 2] = ["/dev/binder", "/dev/binderfs/binder"];
 
 /// The second driver, which the phone's hardware services talk over. Older
 /// phones have the node itself; newer ones have the driver's own filesystem
@@ -95,7 +98,12 @@ pub struct Binder {
 
 impl Binder {
     pub fn open() -> Result<Binder> {
-        Binder::on(Path::new(DEVICE))
+        let node = DEVICE
+            .iter()
+            .map(Path::new)
+            .find(|p| p.exists())
+            .with_context(|| format!("none of {} is here, so no service can be reached", DEVICE.join(" or ")))?;
+        Binder::on(node)
     }
 
     /// The driver the phone's hardware services talk over, which is a
